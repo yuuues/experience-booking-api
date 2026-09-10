@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Tests\Functional\Experience;
 
+use DateTimeImmutable;
 use PHPUnit\Framework\Attributes\Test;
 use Symfony\Bundle\FrameworkBundle\KernelBrowser;
 use Symfony\Bundle\FrameworkBundle\Test\WebTestCase;
@@ -62,6 +63,40 @@ final class ExperienceApiTest extends WebTestCase
 
         self::assertResponseStatusCodeSame(404);
         self::assertSame('/problems/experience-not-found', $this->json()['type']);
+    }
+
+    #[Test]
+    public function it_updates_an_experience_without_bookings(): void
+    {
+        $this->client->jsonRequest('POST', '/api/experiences', ['title' => 'Kayak', 'description' => 'At dawn', 'providerId' => '0192b3a4-1234-7abc-8def-0123456789ac']);
+        $id = $this->json()['id'];
+        self::assertIsString($id);
+
+        $this->client->jsonRequest('PUT', "/api/experiences/{$id}", ['title' => 'Kayak at sunset', 'description' => 'Evening paddle']);
+
+        self::assertResponseStatusCodeSame(200);
+        self::assertSame('Kayak at sunset', $this->json()['title']);
+        self::assertSame('0192b3a4-1234-7abc-8def-0123456789ac', $this->json()['providerId']);
+    }
+
+    #[Test]
+    public function it_refuses_update_once_a_booking_is_confirmed(): void
+    {
+        $this->client->jsonRequest('POST', '/api/experiences', ['title' => 'Kayak', 'description' => 'At dawn', 'providerId' => '0192b3a4-1234-7abc-8def-0123456789ac']);
+        $id = $this->json()['id'];
+        self::assertIsString($id);
+        $this->client->jsonRequest('POST', "/api/experiences/{$id}/sessions", [
+            'startsAt' => (new DateTimeImmutable('+3 days'))->format(\DATE_ATOM), 'capacity' => 5, 'price' => ['amount' => 1500, 'currency' => 'EUR'],
+        ]);
+        $sessionId = $this->json()['id'];
+        self::assertIsString($sessionId);
+        $this->client->jsonRequest('POST', "/api/sessions/{$sessionId}/bookings", ['userId' => '0192b3a4-1234-7abc-8def-0123456789ad', 'seats' => 1]);
+        self::assertResponseStatusCodeSame(201);
+
+        $this->client->jsonRequest('PUT', "/api/experiences/{$id}", ['title' => 'Renamed', 'description' => 'Desc']);
+
+        self::assertResponseStatusCodeSame(409);
+        self::assertSame('/problems/experience-has-bookings', $this->json()['type']);
     }
 
     /** @return array<mixed> */

@@ -1,0 +1,45 @@
+meta {
+  name: 11 - Error: dos sesiones el mismo dia
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{host}}/api/experiences/{{experienceId}}/sessions
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+script:pre-request {
+  // Mismo dia natural que la sesion del paso 4 (misma fecha, 4 horas mas tarde), para chocar
+  // con el indice unico (experience_id, day) sin tocar la ventana horaria de otra prueba.
+  const base = new Date(bru.getVar("session1StartsAt"));
+  base.setUTCHours(base.getUTCHours() + 4);
+  bru.setVar("startsAtSameDay", base.toISOString().replace(/\.\d{3}Z$/, "+00:00"));
+}
+
+body:json {
+  {
+    "startsAt": "{{startsAtSameDay}}",
+    "capacity": 10,
+    "price": {
+      "amount": 3000,
+      "currency": "EUR"
+    }
+  }
+}
+
+assert {
+  res.status: eq 409
+  res.body.type: eq "/problems/session-already-scheduled-for-day"
+}
+
+docs {
+  Una experiencia no puede tener dos sesiones el mismo dia. Demuestra la regla de negocio
+  respaldada por el indice unico `(experience_id, day)`. Esperado: `409` con
+  `type: /problems/session-already-scheduled-for-day`.
+}

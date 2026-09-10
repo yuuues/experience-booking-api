@@ -1,0 +1,22 @@
+meta {
+  name: 08 - Consultar la reserva por su referencia
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{host}}/api/bookings/{{reference}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.reference: eq {{reference}}
+  res.body.status: eq "confirmed"
+}
+
+docs {
+  La referencia publica (`BK-XXXXXXXX`) es la forma en que un usuario consulta su reserva sin
+  conocer ningun UUID interno. Esperado: `200 OK`.
+}

@@ -1,0 +1,33 @@
+meta {
+  name: 03 - Editar la experiencia (aun sin reservas)
+  type: http
+  seq: 3
+}
+
+put {
+  url: {{host}}/api/experiences/{{experienceId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "title": "Ruta en kayak por la Costa Brava (grupos reducidos)",
+    "description": "Salida guiada de tres horas desde Tamariu, con material incluido y grupos de maximo 12 personas."
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.title: eq "Ruta en kayak por la Costa Brava (grupos reducidos)"
+}
+
+docs {
+  Todavia no existe ninguna sesion ni reserva sobre esta experiencia, asi que es editable.
+  Esperado: `200 OK`. Compara con el paso 18, donde el mismo PUT se rechaza porque ya hay una
+  reserva confirmada.
+}

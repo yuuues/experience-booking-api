@@ -1,0 +1,22 @@
+meta {
+  name: 09 - Cancelar la reserva
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{host}}/api/bookings/{{reference}}/cancellation
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.status: eq "cancelled"
+  res.body.cancelledAt: isNotEmpty
+}
+
+docs {
+  La sesion empieza dentro de 7 dias, muy por fuera de la ventana de 24 h, asi que la
+  cancelacion se admite. Esperado: `200 OK` con `status: cancelled`.
+}

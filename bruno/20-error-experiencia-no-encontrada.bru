@@ -1,0 +1,21 @@
+meta {
+  name: 20 - Error: experiencia desconocida
+  type: http
+  seq: 20
+}
+
+get {
+  url: {{host}}/api/experiences/0199a1b2-c3d4-7000-8000-0000000000ff
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 404
+  res.body.type: eq "/problems/experience-not-found"
+}
+
+docs {
+  Un UUID bien formado que no corresponde a ninguna experiencia. Esperado: `404` con
+  `type: /problems/experience-not-found`.
+}

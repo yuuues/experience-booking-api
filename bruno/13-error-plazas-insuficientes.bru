@@ -1,0 +1,37 @@
+meta {
+  name: 13 - Error: reservar mas plazas de las disponibles
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{host}}/api/sessions/{{sessionId}}/bookings
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+script:pre-request {
+  // Una plaza mas que el aforo total (ya liberado por completo tras el paso 10).
+  bru.setVar("tooManySeats", Number(bru.getVar("sessionCapacity")) + 1);
+}
+
+body:json {
+  {
+    "userId": "0199a1b2-c3d4-7000-8000-000000000002",
+    "seats": {{tooManySeats}}
+  }
+}
+
+assert {
+  res.status: eq 422
+  res.body.type: eq "/problems/not-enough-seats-available"
+}
+
+docs {
+  Pide una plaza mas de las que hay disponibles en la sesion. Esperado: `422` con
+  `type: /problems/not-enough-seats-available`.
+}

@@ -63,6 +63,10 @@ Ocho rutas, las mismas que lista `make console c="debug:router"`.
 Las respuestas de abajo son reales; se han partido en varias líneas para leerlas, `curl` las
 devuelve en una sola.
 
+Alternativa sin copiar/pegar: [`bruno/`](bruno/) es una colección de [Bruno](https://www.usebruno.com/)
+con las mismas peticiones encadenadas y sus casos de error, lista para abrir y ejecutar (o correr
+de un tirón con `npx @usebruno/cli run --env local` dentro de `bruno/`).
+
 **Crear una experiencia**
 
 ```bash

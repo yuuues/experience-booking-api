@@ -1,0 +1,37 @@
+meta {
+  name: 16 - Reservar plazas en la sesion proxima
+  type: http
+  seq: 16
+}
+
+post {
+  url: {{host}}/api/sessions/{{sessionId2}}/bookings
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "userId": "0199a1b2-c3d4-7000-8000-000000000003",
+    "seats": 2
+  }
+}
+
+vars:post-response {
+  reference2: res.body.reference
+}
+
+assert {
+  res.status: eq 201
+  res.body.status: eq "confirmed"
+}
+
+docs {
+  Confirma una reserva sobre la sesion proxima. Esta reserva se queda confirmada a proposito:
+  el paso 17 intenta cancelarla y el paso 18 se apoya en que sigue confirmada. Esperado:
+  `201 Created`.
+}

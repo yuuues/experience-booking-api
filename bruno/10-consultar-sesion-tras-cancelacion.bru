@@ -1,0 +1,21 @@
+meta {
+  name: 10 - Consultar la sesion (plazas liberadas)
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{host}}/api/sessions/{{sessionId}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.bookedSeats: eq 0
+  res.body.availableSeats: eq 12
+}
+
+docs {
+  Cancelar libera las plazas: el aforo disponible vuelve a ser el total. Esperado: `200 OK`.
+}

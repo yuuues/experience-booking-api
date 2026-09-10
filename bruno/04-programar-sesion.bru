@@ -1,0 +1,56 @@
+meta {
+  name: 04 - Programar una sesion
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{host}}/api/experiences/{{experienceId}}/sessions
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+script:pre-request {
+  // `startsAt` tiene que ser SIEMPRE futuro para que la coleccion no caduque con el tiempo:
+  // se calcula aqui en vez de venir escrito a fuego. Se fija a las 10:00 UTC de dentro de 7
+  // dias y se guarda como variable global para que los pasos 11 (mismo dia) y 17 (fuera de la
+  // ventana de cancelacion) puedan construir sus propias fechas relativas a esta.
+  // El DTO exige el formato ATOM exacto (offset numerico, sin milisegundos), asi que se
+  // convierte el "Z" y los milisegundos de toISOString() a "+00:00".
+  const base = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+  base.setUTCHours(10, 0, 0, 0);
+  bru.setVar("session1StartsAt", base.toISOString().replace(/\.\d{3}Z$/, "+00:00"));
+}
+
+body:json {
+  {
+    "startsAt": "{{session1StartsAt}}",
+    "capacity": 12,
+    "price": {
+      "amount": 4500,
+      "currency": "EUR"
+    }
+  }
+}
+
+vars:post-response {
+  sessionId: res.body.id
+  sessionCapacity: res.body.capacity
+}
+
+assert {
+  res.status: eq 201
+  res.body.experienceId: eq {{experienceId}}
+  res.body.capacity: eq 12
+  res.body.availableSeats: eq 12
+}
+
+docs {
+  Programa una sesion con aforo 12 y precio 45,00 EUR por plaza. Captura `sessionId` y
+  `sessionCapacity` (usado en el paso 13 para pedir mas plazas de las disponibles). Esperado:
+  `201 Created` con `Location`.
+}

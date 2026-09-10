@@ -1,0 +1,48 @@
+meta {
+  name: 15 - Programar una sesion a pocas horas vista
+  type: http
+  seq: 15
+}
+
+post {
+  url: {{host}}/api/experiences/{{experienceId}}/sessions
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+script:pre-request {
+  // Dentro de las proximas 24 h (pero en el futuro), para poder demostrar en el paso 17 que
+  // cancelar tan cerca del inicio esta bloqueado. Distinto dia natural que las sesiones
+  // anteriores para no chocar con la regla de "un dia por experiencia".
+  const soon = new Date(Date.now() + 5 * 60 * 60 * 1000);
+  bru.setVar("startsAtSoon", soon.toISOString().replace(/\.\d{3}Z$/, "+00:00"));
+}
+
+body:json {
+  {
+    "startsAt": "{{startsAtSoon}}",
+    "capacity": 8,
+    "price": {
+      "amount": 2000,
+      "currency": "EUR"
+    }
+  }
+}
+
+vars:post-response {
+  sessionId2: res.body.id
+}
+
+assert {
+  res.status: eq 201
+  res.body.availableSeats: eq 8
+}
+
+docs {
+  Preparacion para el paso 17: una sesion que empieza dentro de 5 horas. Esperado:
+  `201 Created`.
+}

@@ -1,0 +1,21 @@
+meta {
+  name: 21 - Error: reserva desconocida
+  type: http
+  seq: 21
+}
+
+get {
+  url: {{host}}/api/bookings/BK-00000000
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 404
+  res.body.type: eq "/problems/booking-not-found"
+}
+
+docs {
+  Referencia con formato valido (`BK-` + 8 caracteres del alfabeto permitido) pero que no
+  existe. Esperado: `404` con `type: /problems/booking-not-found`.
+}

@@ -1,0 +1,33 @@
+meta {
+  name: 18 - Error: editar una experiencia con reserva confirmada
+  type: http
+  seq: 18
+}
+
+put {
+  url: {{host}}/api/experiences/{{experienceId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "title": "Ruta en kayak por la Costa Brava (intento de edicion bloqueado)",
+    "description": "Este cambio no deberia aplicarse porque ya hay una reserva confirmada."
+  }
+}
+
+assert {
+  res.status: eq 409
+  res.body.type: eq "/problems/experience-has-bookings"
+}
+
+docs {
+  `reference2` (paso 16) sigue confirmada porque su cancelacion fue rechazada en el paso 17, asi
+  que la experiencia ya no es editable. Contrasta con el paso 3, donde el mismo PUT si
+  funcionaba. Esperado: `409` con `type: /problems/experience-has-bookings`.
+}

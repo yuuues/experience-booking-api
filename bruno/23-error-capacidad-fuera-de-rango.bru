@@ -1,0 +1,45 @@
+meta {
+  name: 23 - Error: capacidad fuera de rango
+  type: http
+  seq: 23
+}
+
+post {
+  url: {{host}}/api/experiences/{{experienceId}}/sessions
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+script:pre-request {
+  // Un dia futuro que no colisiona con ninguna sesion anterior; no deberia importar porque la
+  // peticion falla antes, en la validacion de forma.
+  const future = new Date(Date.now() + 20 * 24 * 60 * 60 * 1000);
+  bru.setVar("startsAtFarFuture", future.toISOString().replace(/\.\d{3}Z$/, "+00:00"));
+}
+
+body:json {
+  {
+    "startsAt": "{{startsAtFarFuture}}",
+    "capacity": 3000000000,
+    "price": {
+      "amount": 3000,
+      "currency": "EUR"
+    }
+  }
+}
+
+assert {
+  res.status: eq 400
+  res.body.type: eq "/problems/validation-failed"
+  res.body.errors: isJson
+}
+
+docs {
+  3.000.000.000 supera `Capacity::MAX` (100.000) por varios ordenes de magnitud; lo atrapa
+  `#[Assert\LessThanOrEqual]` en el DTO antes de llegar al dominio. Esperado: `400` con
+  `type: /problems/validation-failed` y `capacity` entre los `errors[]`.
+}

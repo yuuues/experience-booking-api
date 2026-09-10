@@ -1,0 +1,22 @@
+meta {
+  name: 22 - Error: referencia con letra ambigua
+  type: http
+  seq: 22
+}
+
+get {
+  url: {{host}}/api/bookings/BK-7F3A2CIK
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 400
+  res.body.type: eq "/problems/invalid-value"
+}
+
+docs {
+  La `I` no pertenece al alfabeto Crockford base32 que usa `BookingReference` (excluye
+  I, L, O, U para evitar confusiones visuales). La ruta la deja pasar (`[0-9A-Za-z]{8}`), pero
+  el value object del dominio la rechaza. Esperado: `400` con `type: /problems/invalid-value`.
+}

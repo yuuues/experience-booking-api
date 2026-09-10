@@ -1,0 +1,44 @@
+meta {
+  name: 12 - Error: sesion en el pasado
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{host}}/api/experiences/{{experienceId}}/sessions
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+script:pre-request {
+  // Un dia distinto al de las sesiones anteriores (ayer), para que falle por ser pasado y no
+  // por chocar con el indice de unicidad de dia.
+  const past = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  bru.setVar("startsAtPast", past.toISOString().replace(/\.\d{3}Z$/, "+00:00"));
+}
+
+body:json {
+  {
+    "startsAt": "{{startsAtPast}}",
+    "capacity": 10,
+    "price": {
+      "amount": 3000,
+      "currency": "EUR"
+    }
+  }
+}
+
+assert {
+  res.status: eq 422
+  res.body.type: eq "/problems/session-in-the-past"
+}
+
+docs {
+  El formato de `startsAt` es valido (ISO 8601 con offset), pero la fecha ya paso: la regla la
+  rechaza el agregado `Session`, no el validador de forma. Esperado: `422` con
+  `type: /problems/session-in-the-past`.
+}

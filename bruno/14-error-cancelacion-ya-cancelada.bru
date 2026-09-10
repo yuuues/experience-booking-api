@@ -1,0 +1,21 @@
+meta {
+  name: 14 - Error: cancelar una reserva ya cancelada
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{host}}/api/bookings/{{reference}}/cancellation
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 422
+  res.body.type: eq "/problems/booking-already-cancelled"
+}
+
+docs {
+  Reutiliza `reference`, cancelada ya en el paso 9. Esperado: `422` con
+  `type: /problems/booking-already-cancelled`.
+}

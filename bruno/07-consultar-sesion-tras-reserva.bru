@@ -1,0 +1,21 @@
+meta {
+  name: 07 - Consultar la sesion (plazas consumidas)
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{host}}/api/sessions/{{sessionId}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.bookedSeats: eq 3
+  res.body.availableSeats: eq 9
+}
+
+docs {
+  La sesion ya refleja las 3 plazas reservadas en el paso anterior. Esperado: `200 OK`.
+}

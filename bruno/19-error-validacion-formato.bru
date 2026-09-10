@@ -1,0 +1,36 @@
+meta {
+  name: 19 - Error: payload invalido (forma, no dominio)
+  type: http
+  seq: 19
+}
+
+post {
+  url: {{host}}/api/experiences
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "title": "",
+    "description": "Una descripcion valida para el resto de campos.",
+    "providerId": "no-es-un-uuid"
+  }
+}
+
+assert {
+  res.status: eq 400
+  res.body.type: eq "/problems/validation-failed"
+  res.body.errors: isJson
+}
+
+docs {
+  `title` en blanco y `providerId` con formato invalido: ambos violan el Validator sobre el DTO
+  de entrada, antes de llegar al dominio. Esperado: `400` con `type: /problems/validation-failed`
+  y `errors[]` con las dos rutas de campo (`title` y `providerId`); revisa la pestaña de
+  respuesta para verlas.
+}

@@ -1,0 +1,21 @@
+meta {
+  name: 05 - Consultar la sesion (aforo completo)
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{host}}/api/sessions/{{sessionId}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.bookedSeats: eq 0
+  res.body.availableSeats: eq 12
+}
+
+docs {
+  Todavia no hay reservas: `availableSeats` debe coincidir con el aforo. Esperado: `200 OK`.
+}

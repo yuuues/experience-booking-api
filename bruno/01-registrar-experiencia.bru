@@ -1,0 +1,38 @@
+meta {
+  name: 01 - Registrar una experiencia
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{host}}/api/experiences
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "title": "Ruta en kayak por la Costa Brava",
+    "description": "Salida guiada de tres horas desde Tamariu, con material incluido.",
+    "providerId": "0199a1b2-c3d4-7000-8000-000000000001"
+  }
+}
+
+vars:post-response {
+  experienceId: res.body.id
+}
+
+assert {
+  res.status: eq 201
+  res.body.title: eq "Ruta en kayak por la Costa Brava"
+  res.body.providerId: eq "0199a1b2-c3d4-7000-8000-000000000001"
+}
+
+docs {
+  Arranca el camino feliz: crea la experiencia y captura `experienceId` para el resto de la
+  colección. Esperado: `201 Created` con `Location`.
+}

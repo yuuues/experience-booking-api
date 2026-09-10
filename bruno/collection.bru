@@ -1,0 +1,26 @@
+meta {
+  type: collection
+}
+
+docs {
+  # Colección de la API de reservas de experiencias
+
+  Recorrido guiado, de arriba a abajo, por las 8 rutas de `/api`: el camino feliz completo
+  (crear experiencia → programar sesión → reservar → consultar → cancelar) seguido de los
+  casos de error interesantes (409, 422, 400, 404) descritos en el README.
+
+  Requiere el stack levantado: `make up` (API en `http://localhost:8080`). Selecciona el
+  entorno `local` antes de ejecutar nada; para apuntar a otro sitio basta con cambiar la
+  variable `host` en `environments/local.bru`.
+
+  Las peticiones encadenan datos entre sí con `vars:post-response` (para capturar ids de la
+  respuesta) y `script:pre-request` (para calcular fechas relativas a "ahora", así la colección
+  no caduca). Cada petición lleva su propio bloque `assert` y una nota en `docs` explicando qué
+  demuestra.
+
+  Se puede ejecutar toda la colección de un tirón con la CLI de Bruno, sin abrir la app:
+
+      cd bruno && npx @usebruno/cli run --env local
+
+  o solo una petición: `npx @usebruno/cli run 06-reservar-plazas.bru --env local`.
+}

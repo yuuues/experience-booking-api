@@ -1,0 +1,20 @@
+meta {
+  name: 02 - Consultar la experiencia
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{host}}/api/experiences/{{experienceId}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{experienceId}}
+}
+
+docs {
+  Confirma que la experiencia creada en el paso 1 es consultable. Esperado: `200 OK`.
+}

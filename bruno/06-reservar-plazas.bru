@@ -1,0 +1,38 @@
+meta {
+  name: 06 - Reservar plazas
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{host}}/api/sessions/{{sessionId}}/bookings
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "userId": "0199a1b2-c3d4-7000-8000-000000000002",
+    "seats": 3
+  }
+}
+
+vars:post-response {
+  reference: res.body.reference
+}
+
+assert {
+  res.status: eq 201
+  res.body.seats: eq 3
+  res.body.status: eq "confirmed"
+  res.body.total.amount: eq 13500
+}
+
+docs {
+  Reserva 3 plazas (3 x 4500 = 13500 centimos). Captura `reference`, el identificador publico
+  de la reserva. Esperado: `201 Created` con `Location`.
+}

@@ -1,0 +1,22 @@
+meta {
+  name: 17 - Error: cancelar dentro de la ventana de 24h
+  type: http
+  seq: 17
+}
+
+post {
+  url: {{host}}/api/bookings/{{reference2}}/cancellation
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 422
+  res.body.type: eq "/problems/cancellation-window-closed"
+}
+
+docs {
+  La sesion del paso 15 empieza dentro de 5 horas, por debajo de las 24h de margen: cancelar
+  se rechaza y la reserva se queda `confirmed` (lo aprovecha el paso 18). Esperado: `422` con
+  `type: /problems/cancellation-window-closed`.
+}

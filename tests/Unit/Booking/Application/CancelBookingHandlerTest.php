@@ -27,6 +27,7 @@ final class CancelBookingHandlerTest extends TestCase
 {
     private FixedClock $clock;
     private InMemorySessionRepository $sessions;
+    private InMemoryBookingRepository $bookings;
     private InMemoryDomainEventPublisher $events;
     private CancelBookingHandler $handler;
     private string $sessionId;
@@ -35,19 +36,24 @@ final class CancelBookingHandlerTest extends TestCase
     protected function setUp(): void
     {
         $this->clock = new FixedClock('2026-10-01T10:00:00+00:00');
-        $this->sessions = new InMemorySessionRepository();
-        $bookings = new InMemoryBookingRepository($this->sessions);
         $transaction = new InMemoryTransactionalRunner();
+        $this->sessions = new InMemorySessionRepository($transaction);
+        $this->bookings = new InMemoryBookingRepository($this->sessions, $transaction);
         $this->events = new InMemoryDomainEventPublisher();
 
         $session = SessionTest::aSession($this->clock, startsAt: '2026-10-05T10:00:00+00:00', capacity: 5);
         $this->sessions->save($session);
         $this->sessionId = $session->id()->value;
 
-        $book = new BookSeatsHandler($this->sessions, $bookings, new SequentialBookingReferenceGenerator(), $this->clock, $transaction, $this->events);
+        $book = new BookSeatsHandler($this->sessions, $this->bookings, new SequentialBookingReferenceGenerator(), $this->clock, $transaction, $this->events);
         $this->reference = $book(new BookSeatsCommand(BookingId::generate()->value, $this->sessionId, '0192b3a4-1234-7abc-8def-0123456789ad', 2))->reference;
 
-        $this->handler = new CancelBookingHandler($bookings, $this->sessions, $this->clock, $transaction, $this->events);
+        $this->handler = new CancelBookingHandler($this->bookings, $this->sessions, $this->clock, $transaction, $this->events);
+
+        // The seed session save and the booking flow above happen outside the invocation under
+        // test; reset tracking so each test's assertions are only about the cancel flow itself.
+        $this->sessions->resetSaveTracking();
+        $this->bookings->resetSaveTracking();
     }
 
     #[Test]
@@ -60,6 +66,10 @@ final class CancelBookingHandlerTest extends TestCase
         self::assertSame(5, $this->sessions->find(\App\Session\Domain\SessionId::fromString($this->sessionId))?->availableSeats());
         self::assertSame(2, $this->sessions->lockedReads); // one from booking, one from cancelling
         self::assertCount(1, $this->events->publishedOf(BookingCancelled::class));
+        // Nothing in the lock-count assertion above would catch a save() hoisted out of the
+        // transaction; these pin that both saves happened while it was open.
+        self::assertSame([true], $this->sessions->saveTransactionStates);
+        self::assertSame([true], $this->bookings->saveTransactionStates);
     }
 
     #[Test]

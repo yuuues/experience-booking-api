@@ -9,17 +9,30 @@ use App\Booking\Domain\BookingReference;
 use App\Booking\Domain\BookingRepository;
 use App\Experience\Domain\ExperienceId;
 use App\Session\Domain\SessionRepository;
+use App\Tests\Doubles\Shared\InMemoryTransactionalRunner;
 
 final class InMemoryBookingRepository implements BookingRepository
 {
     /** @var array<string, Booking> keyed by reference */
     private array $items = [];
 
-    public function __construct(private readonly ?SessionRepository $sessions = null) {}
+    /** @var list<bool> whether each save() call happened while the injected runner reported a transaction open */
+    public array $saveTransactionStates = [];
+
+    public function __construct(
+        private readonly ?SessionRepository $sessions = null,
+        private readonly ?InMemoryTransactionalRunner $transaction = null,
+    ) {}
 
     public function save(Booking $booking): void
     {
+        $this->saveTransactionStates[] = null !== $this->transaction && $this->transaction->inTransaction;
         $this->items[$booking->reference()->value] = $booking;
+    }
+
+    public function resetSaveTracking(): void
+    {
+        $this->saveTransactionStates = [];
     }
 
     public function findByReference(BookingReference $reference): ?Booking

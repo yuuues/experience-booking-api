@@ -32,9 +32,9 @@ final class BookSeatsHandlerTest extends TestCase
     protected function setUp(): void
     {
         $clock = new FixedClock('2026-10-01T10:00:00+00:00');
-        $this->sessions = new InMemorySessionRepository();
-        $this->bookings = new InMemoryBookingRepository($this->sessions);
         $this->transaction = new InMemoryTransactionalRunner();
+        $this->sessions = new InMemorySessionRepository($this->transaction);
+        $this->bookings = new InMemoryBookingRepository($this->sessions, $this->transaction);
         $this->events = new InMemoryDomainEventPublisher();
         $this->handler = new BookSeatsHandler(
             $this->sessions,
@@ -48,6 +48,11 @@ final class BookSeatsHandlerTest extends TestCase
         $session = SessionTest::aSession($clock, capacity: 5, priceAmount: 2000);
         $this->sessions->save($session);
         $this->sessionId = $session->id()->value;
+
+        // The seed save above happens outside any transaction; reset the tracking so each test's
+        // assertions are only about the save() calls made by the handler invocation under test.
+        $this->sessions->resetSaveTracking();
+        $this->bookings->resetSaveTracking();
     }
 
     #[Test]
@@ -63,6 +68,10 @@ final class BookSeatsHandlerTest extends TestCase
         self::assertNotNull($this->bookings->findByReference(BookingReference::fromString('BK-00000001')));
         self::assertSame(3, $this->sessions->find($this->session())?->availableSeats());
         self::assertCount(1, $this->events->publishedOf(BookingConfirmed::class));
+        // Nothing in the lock-count assertions above would catch a save() hoisted out of the
+        // transaction; these pin that both saves happened while it was open.
+        self::assertSame([true], $this->sessions->saveTransactionStates);
+        self::assertSame([true], $this->bookings->saveTransactionStates);
     }
 
     #[Test]
@@ -79,9 +88,12 @@ final class BookSeatsHandlerTest extends TestCase
     #[Test]
     public function it_fails_when_not_enough_seats(): void
     {
-        $this->expectException(NotEnoughSeatsAvailable::class);
-
-        ($this->handler)($this->command(seats: 6));
+        try {
+            ($this->handler)($this->command(seats: 6));
+            self::fail('Expected NotEnoughSeatsAvailable to be thrown.');
+        } catch (NotEnoughSeatsAvailable) {
+            self::assertSame(5, $this->sessions->find($this->session())?->availableSeats());
+        }
     }
 
     #[Test]

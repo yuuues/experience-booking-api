@@ -9,6 +9,7 @@ use App\Session\Domain\Session;
 use App\Session\Domain\SessionDay;
 use App\Session\Domain\SessionId;
 use App\Session\Domain\SessionRepository;
+use App\Tests\Doubles\Shared\InMemoryTransactionalRunner;
 
 final class InMemorySessionRepository implements SessionRepository
 {
@@ -17,9 +18,20 @@ final class InMemorySessionRepository implements SessionRepository
 
     public int $lockedReads = 0;
 
+    /** @var list<bool> whether each save() call happened while the injected runner reported a transaction open */
+    public array $saveTransactionStates = [];
+
+    public function __construct(private readonly ?InMemoryTransactionalRunner $transaction = null) {}
+
     public function save(Session $session): void
     {
+        $this->saveTransactionStates[] = null !== $this->transaction && $this->transaction->inTransaction;
         $this->items[$session->id()->value] = $session;
+    }
+
+    public function resetSaveTracking(): void
+    {
+        $this->saveTransactionStates = [];
     }
 
     public function find(SessionId $id): ?Session

@@ -413,7 +413,6 @@ doctrine:
     url: '%env(resolve:DATABASE_URL)%'
     types: {}
   orm:
-    auto_generate_proxy_classes: true
     enable_native_lazy_objects: true
     naming_strategy: doctrine.orm.naming_strategy.underscore_number_aware
     controller_resolver:
@@ -448,8 +447,6 @@ when@test:
 when@prod:
   doctrine:
     orm:
-      auto_generate_proxy_classes: false
-      proxy_dir: '%kernel.build_dir%/doctrine/orm/Proxies'
       query_cache_driver:
         type: pool
         pool: doctrine.system_cache_pool

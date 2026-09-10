@@ -14,6 +14,35 @@ require dirname(__DIR__) . '/vendor/autoload.php';
 use Symfony\Component\HttpClient\HttpClient;
 use Symfony\Component\Uid\Uuid;
 
+/**
+ * Narrows a decoded JSON field to string, guarding against an API response that doesn't
+ * match the shape this probe expects instead of silently casting `mixed`.
+ *
+ * @param array<array-key, mixed> $data
+ */
+function expectString(array $data, string $key): string
+{
+    $value = $data[$key] ?? null;
+    if (!is_string($value)) {
+        throw new RuntimeException(sprintf('Expected the API response to include a string "%s".', $key));
+    }
+
+    return $value;
+}
+
+/**
+ * @param array<array-key, mixed> $data
+ */
+function expectInt(array $data, string $key): int
+{
+    $value = $data[$key] ?? null;
+    if (!is_int($value)) {
+        throw new RuntimeException(sprintf('Expected the API response to include an int "%s".', $key));
+    }
+
+    return $value;
+}
+
 $baseUrl = getenv('API_BASE_URL') ?: 'http://nginx';
 $capacity = (int) (getenv('CAPACITY') ?: 10);
 $attempts = (int) (getenv('ATTEMPTS') ?: 60);
@@ -26,18 +55,21 @@ $experience = $http->request('POST', '/api/experiences', ['json' => [
     'providerId' => Uuid::v7()->toRfc4122(),
 ]])->toArray();
 
-$session = $http->request('POST', sprintf('/api/experiences/%s/sessions', $experience['id']), ['json' => [
+$experienceId = expectString($experience, 'id');
+
+$session = $http->request('POST', sprintf('/api/experiences/%s/sessions', $experienceId), ['json' => [
     'startsAt' => (new DateTimeImmutable('+2 days'))->format(\DATE_ATOM),
     'capacity' => $capacity,
     'price' => ['amount' => 1000, 'currency' => 'EUR'],
 ]])->toArray();
+$sessionId = expectString($session, 'id');
 
-printf("Session %s with capacity %d — firing %d concurrent bookings…\n", $session['id'], $capacity, $attempts);
+printf("Session %s with capacity %d — firing %d concurrent bookings…\n", $sessionId, $capacity, $attempts);
 
 $responses = [];
 for ($i = 0; $i < $attempts; ++$i) {
     // request() is lazy: all requests are in flight together, resolved in the stream() loop below.
-    $responses[] = $http->request('POST', sprintf('/api/sessions/%s/bookings', $session['id']), ['json' => [
+    $responses[] = $http->request('POST', sprintf('/api/sessions/%s/bookings', $sessionId), ['json' => [
         'userId' => Uuid::v7()->toRfc4122(),
         'seats' => 1,
     ]]);
@@ -58,16 +90,19 @@ foreach ($http->stream($responses) as $response => $chunk) {
 }
 ksort($statuses);
 
-$final = $http->request('GET', sprintf('/api/sessions/%s', $session['id']))->toArray();
+$final = $http->request('GET', sprintf('/api/sessions/%s', $sessionId))->toArray();
+$bookedSeats = expectInt($final, 'bookedSeats');
+$finalCapacity = expectInt($final, 'capacity');
+$availableSeats = expectInt($final, 'availableSeats');
 
 foreach ($statuses as $code => $count) {
     printf("  HTTP %d: %d\n", $code, $count);
 }
-printf("Booked seats: %d / %d (available: %d)\n", $final['bookedSeats'], $final['capacity'], $final['availableSeats']);
+printf("Booked seats: %d / %d (available: %d)\n", $bookedSeats, $finalCapacity, $availableSeats);
 
 $ok = ($statuses[201] ?? 0) === $capacity
-    && $final['bookedSeats'] === $capacity
-    && 0 === $final['availableSeats']
+    && $bookedSeats === $capacity
+    && 0 === $availableSeats
     && ($statuses[201] ?? 0) + ($statuses[422] ?? 0) + ($statuses[503] ?? 0) === $attempts;
 
 echo $ok ? "OK — no overbooking.\n" : "FAIL — overbooking or unexpected responses.\n";

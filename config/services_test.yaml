@@ -24,3 +24,10 @@ services:
   App\Shared\Domain\Clock:
     alias: App\Shared\Infrastructure\SystemClock
     public: true
+
+  # The functional test asserts on what was actually "sent"; the in-memory double captures it
+  # instead of building a real Symfony\Component\Mime\Email through MAILER_DSN=null://null.
+  App\Tests\Doubles\Booking\InMemoryMailer:
+    public: true
+
+  App\Booking\Domain\Notification\MailerPort: '@App\Tests\Doubles\Booking\InMemoryMailer'

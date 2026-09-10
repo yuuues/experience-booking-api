@@ -1,0 +1,74 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/*
+ * Fires N concurrent single-seat bookings at one session with capacity M (N > M)
+ * and verifies that exactly M succeed and the session ends with 0 available seats.
+ * Run against the dockerised API: `make test-concurrency`.
+ */
+
+require dirname(__DIR__) . '/vendor/autoload.php';
+
+use Symfony\Component\HttpClient\HttpClient;
+use Symfony\Component\Uid\Uuid;
+
+$baseUrl = getenv('API_BASE_URL') ?: 'http://nginx';
+$capacity = (int) (getenv('CAPACITY') ?: 10);
+$attempts = (int) (getenv('ATTEMPTS') ?: 60);
+
+$http = HttpClient::create(['base_uri' => $baseUrl, 'timeout' => 30]);
+
+$experience = $http->request('POST', '/api/experiences', ['json' => [
+    'title' => 'Concurrency probe ' . date('H:i:s'),
+    'description' => 'Flash-sale simulation.',
+    'providerId' => Uuid::v7()->toRfc4122(),
+]])->toArray();
+
+$session = $http->request('POST', sprintf('/api/experiences/%s/sessions', $experience['id']), ['json' => [
+    'startsAt' => (new DateTimeImmutable('+2 days'))->format(\DATE_ATOM),
+    'capacity' => $capacity,
+    'price' => ['amount' => 1000, 'currency' => 'EUR'],
+]])->toArray();
+
+printf("Session %s with capacity %d — firing %d concurrent bookings…\n", $session['id'], $capacity, $attempts);
+
+$responses = [];
+for ($i = 0; $i < $attempts; ++$i) {
+    // request() is lazy: all requests are in flight together, resolved in the stream() loop below.
+    $responses[] = $http->request('POST', sprintf('/api/sessions/%s/bookings', $session['id']), ['json' => [
+        'userId' => Uuid::v7()->toRfc4122(),
+        'seats' => 1,
+    ]]);
+}
+
+$statuses = [];
+foreach ($http->stream($responses) as $response => $chunk) {
+    if ($chunk->isFirst()) {
+        // getStatusCode() never throws. Calling it here marks the response as "checked", which
+        // stops the client's own end-of-stream safeguard from throwing on a 4xx/5xx later —
+        // expected here, since most attempts are supposed to fail with 422/503.
+        $response->getStatusCode();
+    }
+    if ($chunk->isLast()) {
+        $code = $response->getStatusCode();
+        $statuses[$code] = ($statuses[$code] ?? 0) + 1;
+    }
+}
+ksort($statuses);
+
+$final = $http->request('GET', sprintf('/api/sessions/%s', $session['id']))->toArray();
+
+foreach ($statuses as $code => $count) {
+    printf("  HTTP %d: %d\n", $code, $count);
+}
+printf("Booked seats: %d / %d (available: %d)\n", $final['bookedSeats'], $final['capacity'], $final['availableSeats']);
+
+$ok = ($statuses[201] ?? 0) === $capacity
+    && $final['bookedSeats'] === $capacity
+    && 0 === $final['availableSeats']
+    && ($statuses[201] ?? 0) + ($statuses[422] ?? 0) + ($statuses[503] ?? 0) === $attempts;
+
+echo $ok ? "OK — no overbooking.\n" : "FAIL — overbooking or unexpected responses.\n";
+exit($ok ? 0 : 1);

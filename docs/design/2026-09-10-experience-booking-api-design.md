@@ -148,9 +148,15 @@ devuelven agregados.
 | `FindExperience` | carga (404) → `ExperienceResponse` |
 | `ScheduleSession` | carga experiencia (404) → `existsForExperienceOn` (409) → `Session::schedule(clock)` → `save` → `SessionResponse` |
 | `FindSession` | carga (404) → `SessionResponse` (con `availableSeats`) |
-| `BookSeats` | **transacción**: `findForUpdate(sessionId)` (404) → `reference = generator->next()` hasta que `!existsByReference` → `session->book(...)` → `save(session)`, `save(booking)` → publicar eventos → commit → `BookingResponse` |
+| `BookSeats` | `reference = generator->next()` hasta que `!existsByReference` (**fuera** de la transacción) → **transacción**: `findForUpdate(sessionId)` (404) → `session->book(...)` → `save(session)`, `save(booking)` → publicar eventos → commit → `BookingResponse` |
 | `CancelBooking` | **transacción**: `findByReference` (404) → `findForUpdate(booking.sessionId)` → `session->cancelBooking(booking, clock)` → guarda ambos → publicar eventos → commit → `BookingResponse` |
 | `FindBooking` | `findByReference` (404) → `BookingResponse` |
+
+La referencia de reserva se genera **antes** de abrir la transacción (cambio respecto al diseño
+inicial, decidido en la revisión de la tarea 13): la comprobación de unicidad es un `SELECT`
+que no necesita correr con el bloqueo de fila cogido, y sacarlo acorta la sección crítica en la
+sesión más disputada. La red de seguridad real sigue siendo el índice único sobre
+`bookings.reference`, no esa lectura.
 
 Puertos en `Shared/Application`:
 

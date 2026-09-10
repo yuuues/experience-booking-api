@@ -396,13 +396,20 @@ aserción sobre la integridad del dato, no un control de concurrencia.
 ### 5.4 Cómo reproducirlo
 
 `bin/concurrency-test` crea una experiencia y una sesión de aforo *M*, lanza *N* reservas de una
-plaza **realmente en paralelo** contra la API (cliente HTTP multiplexado, `N > M`) y comprueba
-las tres cosas: cuántas devolvieron `201`, cuántas `422` y en qué quedó `bookedSeats`.
+plaza contra la API con `N > M` y comprueba tres cosas: cuántas devolvieron `201`, cuántas `422`
+y en qué quedó `bookedSeats`.
+
+Que las peticiones salgan **de verdad a la vez** requiere un detalle fácil de pasar por alto:
+`HttpClient::create()` limita por defecto a 6 conexiones por host, así que una sonda ingenua
+que "lanza 60" en realidad las va encolando de seis en seis en el cliente, no en la base de
+datos. La sonda sube `maxHostConnections` al número de intentos; muestreando
+`pg_stat_activity` a mitad de una ejecución se ven **19 transacciones simultáneas esperando el
+bloqueo de fila** (antes del ajuste eran 5).
 
 ```console
 $ make test-concurrency
 docker compose exec -T -e CAPACITY=10 -e ATTEMPTS=60 php php bin/concurrency-test
-Session 01a08d3f-7059-77d7-98ec-edbe612f764c with capacity 10 — firing 60 concurrent bookings…
+Session 01a08d4a-0a74-7e39-ab73-3f8a2e5d97bb with capacity 10 — firing 60 bookings (up to 60 in flight)…
   HTTP 201: 10
   HTTP 422: 50
 Booked seats: 10 / 10 (available: 0)
@@ -414,7 +421,7 @@ El caso extremo, aforo 1 y 100 peticiones simultáneas:
 ```console
 $ make test-concurrency CAPACITY=1 ATTEMPTS=100
 docker compose exec -T -e CAPACITY=1 -e ATTEMPTS=100 php php bin/concurrency-test
-Session 01a08d40-0bfd-7611-ac18-8cbfbe8dc012 with capacity 1 — firing 100 concurrent bookings…
+Session 01a08d4a-8782-7c60-b5d6-2caf6523dba6 with capacity 1 — firing 100 bookings (up to 100 in flight)…
   HTTP 201: 1
   HTTP 422: 99
 Booked seats: 1 / 1 (available: 0)
@@ -422,8 +429,20 @@ OK — no overbooking.
 ```
 
 Exactamente una reserva gana; las otras 99 reciben un 422 correcto, no un error de servidor.
-Quitar el `LockMode::PESSIMISTIC_WRITE` de `findForUpdate` y volver a lanzar la sonda es la
-forma más rápida de ver la sobreventa aparecer.
+
+### 5.5 Control negativo: la sonda mide algo
+
+Una sonda que pasa solo demuestra algo si también sabe fallar. Se comprobó a mano sustituyendo
+`findForUpdate()` por un `find()` sin `LockMode::PESSIMISTIC_WRITE` y relanzando la sonda con
+aforo 10 y 60 intentos; después se restauró el árbol de trabajo. Sin el bloqueo, la API devolvió
+**`HTTP 201` sesenta veces** —50 plazas vendidas de más— y la sonda terminó con código distinto
+de cero.
+
+El detalle que importa: en esa ejecución rota `bookedSeats` seguía leyéndose **10/10, con 0
+disponibles**. La actualización perdida se esconde dentro del propio contador, así que una
+comprobación que solo mirase las plazas almacenadas —o el `CHECK` de la tabla, por lo dicho en
+§5.2— habría dado el visto bueno igualmente. Lo único que detecta la sobreventa es la aserción
+`recuento de 201 === aforo`, y por eso la sonda la hace.
 
 ---
 

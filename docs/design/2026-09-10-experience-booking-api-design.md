@@ -31,8 +31,8 @@ usuarios reservan la misma sesión a la vez.
 
 | Tema | Decisión | Motivo |
 |---|---|---|
-| Framework | Symfony 7.x, PHP 8.3 | Estándar de facto para DDD/hexagonal en PHP; Doctrine es Data Mapper; Messenger para eventos y correo asíncrono |
-| Base de datos | PostgreSQL 16 (Docker) | Problema transaccional: `FOR UPDATE`, `CHECK`, índices únicos. NoSQL solo tendría sentido para read models (no pedidos) |
+| Framework | Symfony 8.1, PHP 8.5 | Estándar de facto para DDD/hexagonal en PHP; Doctrine es Data Mapper; Messenger para eventos y correo asíncrono |
+| Base de datos | PostgreSQL 18 (Docker) | Problema transaccional: `FOR UPDATE`, `CHECK`, índices únicos. NoSQL solo tendría sentido para read models (no pedidos) |
 | Entorno | `docker compose` (php-fpm, nginx, postgres) + `Makefile` | Reproducible para el evaluador |
 | Concurrencia | Bloqueo pesimista `SELECT … FOR UPDATE` sobre la fila de la sesión + `CHECK` en BD | Correcto bajo alta contención, sin reintentos; la regla sigue en el agregado |
 | Email de contacto | Puerto `UserContactProvider` (resuelve email a partir de `UserId`), adaptador fake determinista | El usuario vive en otro contexto; no se modela |
@@ -252,8 +252,8 @@ docker/ (php, nginx), compose.yaml, Makefile
 
 ## 10. Herramientas y calidad
 
-PHP 8.3, Symfony 7.x, Doctrine ORM 3 + Migrations, Messenger, Symfony Mailer, PHPUnit 11,
-PHPStan nivel max, PHP-CS-Fixer (PSR-12), `declare(strict_types=1)` en todo. `Makefile`:
+PHP 8.5, Symfony 8.1, Doctrine ORM 3.7 + Migrations, Messenger, Symfony Mailer, PHPUnit 13,
+PHPStan 2.2 nivel max, PHP-CS-Fixer (PSR-12), `declare(strict_types=1)` en todo. `Makefile`:
 `up`, `down`, `migrate`, `test`, `test-concurrency`, `stan`, `cs`.
 
 ## 11. README (esquema)

@@ -1,0 +1,10 @@
+services:
+  _defaults:
+    autowire: true
+    autoconfigure: true
+
+  # Integration tests resolve domain ports from the container; the aliases are private in
+  # prod and would be pruned while no controller consumes them yet.
+  App\Experience\Domain\ExperienceRepository:
+    alias: App\Experience\Infrastructure\Persistence\Doctrine\DoctrineExperienceRepository
+    public: true

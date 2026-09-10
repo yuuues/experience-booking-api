@@ -10,7 +10,7 @@ use App\Experience\Domain\ExperienceRepository;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Component\DependencyInjection\Attribute\AsAlias;
 
-#[AsAlias(id: ExperienceRepository::class, public: true)]
+#[AsAlias(id: ExperienceRepository::class)]
 final readonly class DoctrineExperienceRepository implements ExperienceRepository
 {
     public function __construct(private EntityManagerInterface $entityManager) {}

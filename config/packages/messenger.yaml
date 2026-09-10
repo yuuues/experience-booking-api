@@ -1,6 +1,14 @@
 framework:
   messenger:
     failure_transport: failed
+    # Domain events are fire-and-forget: publishing one must not fail just because no
+    # handler subscribes to it yet (the `sync://` transport used in tests would otherwise
+    # raise "No handler for message" on every dispatch).
+    default_bus: messenger.bus.default
+    buses:
+      messenger.bus.default:
+        default_middleware:
+          allow_no_handlers: true
     transports:
       async:
         dsn: '%env(MESSENGER_TRANSPORT_DSN)%'

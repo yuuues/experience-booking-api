@@ -10,6 +10,10 @@ doctrine:
       session_starts_at: App\Session\Infrastructure\Persistence\Doctrine\Type\StartsAtType
       session_day: App\Session\Infrastructure\Persistence\Doctrine\Type\SessionDayType
       session_capacity: App\Session\Infrastructure\Persistence\Doctrine\Type\CapacityType
+      booking_id: App\Booking\Infrastructure\Persistence\Doctrine\Type\BookingIdType
+      user_id: App\Booking\Infrastructure\Persistence\Doctrine\Type\UserIdType
+      booking_reference: App\Booking\Infrastructure\Persistence\Doctrine\Type\BookingReferenceType
+      booking_seats: App\Booking\Infrastructure\Persistence\Doctrine\Type\SeatsType
   orm:
     enable_native_lazy_objects: true
     naming_strategy: doctrine.orm.naming_strategy.underscore_number_aware

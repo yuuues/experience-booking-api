@@ -13,6 +13,14 @@ services:
     alias: App\Session\Infrastructure\Persistence\Doctrine\DoctrineSessionRepository
     public: true
 
+  App\Booking\Domain\BookingRepository:
+    alias: App\Booking\Infrastructure\Persistence\Doctrine\DoctrineBookingRepository
+    public: true
+
+  App\Booking\Domain\BookingReferenceGenerator:
+    alias: App\Booking\Infrastructure\Reference\RandomBookingReferenceGenerator
+    public: true
+
   App\Shared\Domain\Clock:
     alias: App\Shared\Infrastructure\SystemClock
     public: true

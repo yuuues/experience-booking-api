@@ -128,8 +128,8 @@ existir un VO inválido.
 | Excepción | HTTP |
 |---|---|
 | `ExperienceNotFound`, `SessionNotFound`, `BookingNotFound` | 404 |
-| `SessionAlreadyScheduledForDay`, `ExperienceHasBookings` | 409 |
-| `SessionInThePast`, `SessionAlreadyStarted`, `NotEnoughSeatsAvailable`, `BookingAlreadyCancelled`, `CancellationWindowClosed` | 422 |
+| `SessionAlreadyScheduledForDay`, `ExperienceHasBookings`, `BookingReferenceExhausted` | 409 |
+| `SessionInThePast`, `SessionAlreadyStarted`, `NotEnoughSeatsAvailable`, `BookingAlreadyCancelled`, `CancellationWindowClosed`, `BookingDoesNotBelongToSession` | 422 |
 | Validación de forma del request, `InvalidValue` (VO mal formado que pasó la validación de forma) | 400 |
 | Lock timeout en BD | 503 + `Retry-After` |
 
@@ -274,7 +274,7 @@ docker/ (php, nginx), compose.yaml, Makefile
 ## 10. Herramientas y calidad
 
 PHP 8.5, Symfony 8.1, Doctrine ORM 3.7 + Migrations, Messenger, Symfony Mailer, PHPUnit 13,
-PHPStan 2.2 nivel max, PHP-CS-Fixer (PSR-12), `declare(strict_types=1)` en todo. `Makefile`:
+PHPStan 2.2 nivel max, PHP-CS-Fixer (`@Symfony` + `@Symfony:risky` + `@PER-CS2.0`), `declare(strict_types=1)` en todo. `Makefile`:
 `up`, `down`, `migrate`, `test`, `test-concurrency`, `stan`, `cs`.
 
 ## 11. README (esquema)

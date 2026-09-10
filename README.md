@@ -260,7 +260,11 @@ src/
 ```
 
 - **Domain**: agregados (`Experience`, `Session`, `Booking`), value objects, eventos,
-  excepciones e **interfaces de puerto**. Sin una sola referencia a Symfony ni a Doctrine.
+  excepciones e **interfaces de puerto**. Cero Doctrine y cero framework, con una única
+  excepción deliberada: `Shared/Domain/Uuid.php` usa `symfony/uid` para generar UUIDv7, porque
+  escribir a mano un generador de UUIDv7 sería peor que depender de un componente bien probado.
+  Está confinada a ese fichero: ninguna otra clase de dominio importa nada de Symfony
+  (`grep -rn "use Symfony" src/*/Domain` devuelve solo esa línea).
 - **Application**: un caso de uso = `Command`/`Query` readonly + `Handler` + `Response` DTO. Los
   handlers nunca devuelven agregados.
 - **Infrastructure**: controladores HTTP y DTOs de request, repositorios Doctrine, tipos
@@ -592,19 +596,19 @@ al cliente.
 ## 9. Calidad
 
 ```bash
-make test              # 121 tests
+make test              # 131 tests
 make stan              # PHPStan nivel max
 make cs                # PHP-CS-Fixer, @Symfony + @PER-CS2.0
 make test-concurrency  # sonda de concurrencia contra la API real
 ```
 
-**Tests: 121, 1426 aserciones.**
+**Tests: 131, 1446 aserciones.**
 
 | Suite | Tests | Qué cubre |
 |---|---|---|
-| `tests/Unit` | 87 | Reglas de negocio sobre agregados y value objects; handlers con repositorios in-memory, `FixedClock` e `InMemoryMailer`. Sin base de datos, milisegundos |
+| `tests/Unit` | 95 | Reglas de negocio sobre agregados y value objects; handlers con repositorios in-memory, `FixedClock` e `InMemoryMailer`. Sin base de datos, milisegundos |
 | `tests/Integration` | 16 | Repositorios Doctrine contra PostgreSQL real: round-trip de value objects, `findForUpdate`, el índice único traducido a excepción de dominio, la idempotencia del registro DBAL y la atomicidad del outbox |
-| `tests/Functional` | 18 | `WebTestCase` sobre los 8 endpoints: éxitos, cada código de error, formato `problem+json`, cabecera `Location` y los correos generados |
+| `tests/Functional` | 20 | `WebTestCase` sobre los 8 endpoints: éxitos, cada código de error, formato `problem+json`, cabecera `Location` y los correos generados |
 | `bin/concurrency-test` | — | Sonda fuera de PHPUnit: procesos concurrentes reales contra la API dockerizada (`make test-concurrency`) |
 
 La sonda de concurrencia está deliberadamente fuera de PHPUnit: lo que se quiere demostrar es
@@ -620,6 +624,33 @@ así que también valida DQL y los tipos del contenedor.
 **Estilo:** PHP-CS-Fixer con `@Symfony` + `@Symfony:risky` + `@PER-CS2.0`, más
 `declare(strict_types=1)`, `strict_comparison` y `strict_param` obligatorios. `make cs` en seco,
 `make cs-fix` para corregir.
+
+### 9.1 `doctrine:schema:validate`: mapping limpio, base de datos deliberadamente por delante
+
+`make console c="doctrine:schema:validate"` informa de dos cosas distintas:
+
+```
+Mapping  [OK] The mapping files are correct.
+Database [ERROR] The database schema is not in sync with the current mapping file.
+```
+
+**El mapping está limpio.** Lo que la sección `Database` señala no es deriva accidental: es que
+**las migraciones son la fuente de verdad del esquema** y contienen restricciones que el mapping
+no modela a propósito. `doctrine:schema:update --dump-sql` enumera exactamente lo que borraría:
+
+| Lo que Doctrine querría hacer | Por qué está así |
+|---|---|
+| `DROP TABLE sent_notifications` | Tabla de idempotencia de correo, no un agregado. La gestiona `DbalSentNotificationRegistry` con SQL directo; mapearla como entidad sería inventar un agregado que el dominio no tiene |
+| `DROP CONSTRAINT fk_sessions_experience`, `fk_bookings_session` (y los `DROP INDEX IDX_…` que Doctrine asocia implícitamente a cada FK) | Integridad referencial en la base de datos. El mapping no declara asociaciones ORM porque los agregados se referencian **por id** (`ExperienceId`, `SessionId`), no por objeto: es la regla de agregados de DDD, no un olvido |
+| `DROP INDEX uniq_sessions_experience_day` | Es el índice único que hace cumplir "una sesión por experiencia y día" bajo concurrencia (§5). Se traduce a `SessionAlreadyScheduledForDay` |
+| `DROP INDEX idx_experiences_provider`, `idx_bookings_user`, `idx_bookings_session_status` | Índices de rendimiento para las consultas reales. Un índice es una decisión de la base de datos, no del modelo de dominio |
+| `ALTER TABLE sessions ALTER booked_seats DROP DEFAULT` | `DEFAULT 0` protege inserciones que no pasen por el ORM |
+| `CHAR(3)` → `VARCHAR(3)`, `CHAR(11)` → `VARCHAR(11)` | Las columnas de longitud fija (código ISO 4217, referencia `BK-XXXXXXXX`) se declaran `CHAR` en la migración; Doctrine solo sabe generar `VARCHAR` |
+| `ALTER INDEX uniq_bookings_reference RENAME TO UNIQ_7A853C35AEA34913` | Nombre autogenerado por Doctrine frente al nombre explícito y legible de la migración |
+
+Es decir: la base de datos tiene **más** garantías que el mapping, no menos. Sincronizarlas
+significaría degradar el esquema para satisfacer a una herramienta, y `doctrine:schema:update`
+no se ejecuta nunca en este proyecto (§10: *el esquema nunca se toca a mano*).
 
 ---
 

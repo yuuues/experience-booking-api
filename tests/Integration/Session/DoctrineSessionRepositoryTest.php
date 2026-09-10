@@ -66,9 +66,9 @@ final class DoctrineSessionRepositoryTest extends KernelTestCase
         $session = $this->aSession('+3 days 10:00');
         $this->sessions->save($session);
 
-        // Discarded on purpose: the bookings table doesn't exist until Task 14, so this
-        // test only cares whether Session::book()'s mutation of $bookedSeats survives a
-        // save()/clear()/reload round trip, not about persisting the Booking itself.
+        // The returned Booking is discarded on purpose: this test only cares whether
+        // Session::book()'s mutation of $bookedSeats survives a save()/clear()/reload round
+        // trip, not about persisting the Booking itself.
         $session->book(BookingId::generate(), BookingReference::fromString('BK-7F3A2C9K'), UserId::generate(), Seats::fromInt(3), $clock);
         $this->sessions->save($session);
         $this->entityManager->clear();

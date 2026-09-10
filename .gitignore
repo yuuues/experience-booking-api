@@ -5,6 +5,7 @@
 /.env.*.local
 /.phpunit.cache/
 /.php-cs-fixer.cache
+/config/reference.php
 /phpstan.neon
 /phpunit.xml
 /.php-cs-fixer.php

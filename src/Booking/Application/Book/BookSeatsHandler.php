@@ -40,8 +40,8 @@ final readonly class BookSeatsHandler
         $userId = UserId::fromString($command->userId);
         $seats = Seats::fromInt($command->seats);
         // Generated before the transaction opens: the uniqueness check is a plain read that does
-        // not need to run while the session row lock is held. The DB unique index (Task 14) is the
-        // real guard against a lost race between here and the insert.
+        // not need to run while the session row lock is held. The unique index on the reference
+        // column is the real guard against a lost race between here and the insert.
         $reference = $this->uniqueReference();
 
         return $this->transaction->run(function () use ($sessionId, $bookingId, $userId, $seats, $reference): BookingResponse {

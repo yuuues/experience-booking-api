@@ -11,8 +11,19 @@ declare(strict_types=1);
 
 require dirname(__DIR__) . '/vendor/autoload.php';
 
+use Symfony\Component\HttpClient\Exception\TimeoutException;
 use Symfony\Component\HttpClient\HttpClient;
 use Symfony\Component\Uid\Uuid;
+
+/**
+ * The probe measures whether PostgreSQL serialises concurrent bookings. A run that never got
+ * answers measures nothing, so it exits non-zero without claiming the API oversold.
+ */
+function inconclusive(string $reason): never
+{
+    fwrite(\STDERR, sprintf("INCONCLUSIVE — %s\n", $reason));
+    exit(2);
+}
 
 /**
  * Narrows a decoded JSON field to string, guarding against an API response that doesn't
@@ -90,21 +101,30 @@ for ($i = 0; $i < $attempts; ++$i) {
 }
 
 $statuses = [];
-foreach ($http->stream($responses) as $response => $chunk) {
-    if ($chunk->isFirst()) {
-        // getStatusCode() never throws. Calling it here marks the response as "checked", which
-        // stops the client's own end-of-stream safeguard from throwing on a 4xx/5xx later —
-        // expected here, since most attempts are supposed to fail with 422/503.
-        $response->getStatusCode();
+try {
+    foreach ($http->stream($responses) as $response => $chunk) {
+        if ($chunk->isFirst()) {
+            // getStatusCode() never throws. Calling it here marks the response as "checked", which
+            // stops the client's own end-of-stream safeguard from throwing on a 4xx/5xx later —
+            // expected here, since most attempts are supposed to fail with 422/503.
+            $response->getStatusCode();
+        }
+        if ($chunk->isLast()) {
+            $code = $response->getStatusCode();
+            $statuses[$code] = ($statuses[$code] ?? 0) + 1;
+        }
     }
-    if ($chunk->isLast()) {
-        $code = $response->getStatusCode();
-        $statuses[$code] = ($statuses[$code] ?? 0) + 1;
-    }
+
+    $final = $http->request('GET', sprintf('/api/sessions/%s', $sessionId))->toArray();
+} catch (TimeoutException $e) {
+    inconclusive(sprintf(
+        "requests timed out before the API answered them (%s).\nWith ATTEMPTS=%d every request queues on php-fpm before it reaches the row lock: lower ATTEMPTS or raise pm.max_children in docker/php/php-fpm.d/.",
+        $e->getMessage(),
+        $attempts,
+    ));
 }
 ksort($statuses);
 
-$final = $http->request('GET', sprintf('/api/sessions/%s', $sessionId))->toArray();
 $bookedSeats = expectInt($final, 'bookedSeats');
 $finalCapacity = expectInt($final, 'capacity');
 $availableSeats = expectInt($final, 'availableSeats');
@@ -114,11 +134,42 @@ foreach ($statuses as $code => $count) {
 }
 printf("Booked seats: %d / %d (available: %d)\n", $bookedSeats, $finalCapacity, $availableSeats);
 
-$ok = ($statuses[201] ?? 0) === $capacity
-    && $finalCapacity === $capacity
-    && $bookedSeats === $capacity
-    && 0 === $availableSeats
-    && ($statuses[201] ?? 0) + ($statuses[422] ?? 0) + ($statuses[503] ?? 0) === $attempts;
+$confirmed = $statuses[201] ?? 0;
+$lockTimeouts = $statuses[503] ?? 0;
+$unexpected = array_diff_key($statuses, [201 => null, 422 => null, 503 => null]);
 
-echo $ok ? "OK — no overbooking.\n" : "FAIL — overbooking or unexpected responses.\n";
-exit($ok ? 0 : 1);
+// A hard failure means the API let more seats out than it had, or lost count of the ones it did.
+// Everything else is either a clean pass or a run that proves nothing.
+if ($confirmed > $capacity || $bookedSeats > $finalCapacity || $bookedSeats !== $confirmed || $availableSeats !== $finalCapacity - $bookedSeats) {
+    echo "FAIL — overbooking: more seats were confirmed than the session had, or the session lost count.\n";
+    exit(1);
+}
+
+if ([] !== $unexpected) {
+    printf("FAIL — unexpected status codes: %s.\n", implode(', ', array_keys($unexpected)));
+    exit(1);
+}
+
+if ($finalCapacity !== $capacity || array_sum($statuses) !== $attempts) {
+    echo "FAIL — the session under test changed capacity mid-run, or some attempts went unanswered.\n";
+    exit(1);
+}
+
+if ($confirmed < $capacity && 0 === $lockTimeouts) {
+    printf("FAIL — only %d of %d seats were confirmed and nothing timed out: seats were rejected while still available.\n", $confirmed, $capacity);
+    exit(1);
+}
+
+// README §5.1: under contention a `lock_timeout` is the correct answer, not a bug — but a run that
+// answered 503 instead of booking never got as far as proving the seats were serialised.
+if ($confirmed < $capacity) {
+    inconclusive(sprintf(
+        "only %d of %d seats were confirmed because %d request(s) hit the lock timeout (503).\nNo overbooking happened, but the run does not prove the session fills exactly: lower ATTEMPTS or raise pm.max_children.",
+        $confirmed,
+        $capacity,
+        $lockTimeouts,
+    ));
+}
+
+echo "OK — no overbooking.\n";
+exit(0);

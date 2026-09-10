@@ -91,6 +91,36 @@ final class SessionApiTest extends WebTestCase
     }
 
     #[Test]
+    public function it_rejects_a_capacity_above_the_maximum(): void
+    {
+        $this->client->jsonRequest('POST', "/api/experiences/{$this->experienceId}/sessions", [
+            'startsAt' => (new DateTimeImmutable('+3 days'))->format(\DATE_ATOM),
+            'capacity' => 3_000_000_000,
+            'price' => ['amount' => 1000, 'currency' => 'EUR'],
+        ]);
+
+        self::assertResponseStatusCodeSame(400);
+        $errors = $this->json()['errors'];
+        self::assertIsArray($errors);
+        self::assertContains('capacity', array_column($errors, 'field'));
+    }
+
+    #[Test]
+    public function it_rejects_a_price_above_the_maximum(): void
+    {
+        $this->client->jsonRequest('POST', "/api/experiences/{$this->experienceId}/sessions", [
+            'startsAt' => (new DateTimeImmutable('+3 days'))->format(\DATE_ATOM),
+            'capacity' => 10,
+            'price' => ['amount' => \PHP_INT_MAX, 'currency' => 'EUR'],
+        ]);
+
+        self::assertResponseStatusCodeSame(400);
+        $errors = $this->json()['errors'];
+        self::assertIsArray($errors);
+        self::assertContains('price.amount', array_column($errors, 'field'));
+    }
+
+    #[Test]
     public function it_returns_404_for_unknown_experience(): void
     {
         $this->client->jsonRequest('POST', '/api/experiences/0192b3a4-1234-7abc-8def-0123456789ff/sessions', [

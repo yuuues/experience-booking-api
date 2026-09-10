@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Booking\Application;
 
 use App\Booking\Domain\Booking;
-use App\Session\Application\MoneyResponse;
+use App\Shared\Application\MoneyResponse;
 
 final readonly class BookingResponse
 {

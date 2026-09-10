@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace App\Session\Application;
+namespace App\Shared\Application;
 
 use App\Shared\Domain\Money;
 

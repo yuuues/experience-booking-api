@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Session\Application;
 
 use App\Session\Domain\Session;
+use App\Shared\Application\MoneyResponse;
 
 final readonly class SessionResponse
 {

@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace App\Shared\Infrastructure\Symfony;
 
+use App\Shared\Domain\ConflictException;
 use App\Shared\Domain\DomainException;
 use App\Shared\Domain\InvalidValue;
 use App\Shared\Domain\NotFoundException;
+use Doctrine\DBAL\Exception\DriverException;
 use Doctrine\DBAL\Exception\LockWaitTimeoutException;
 use Symfony\Component\DependencyInjection\Attribute\Autowire;
 use Symfony\Component\EventDispatcher\Attribute\AsEventListener;
@@ -24,14 +26,12 @@ final readonly class ProblemJsonExceptionListener
     /** @var array<class-string<DomainException>, int> checked in order; first `instanceof` wins */
     private const array DOMAIN_STATUS = [
         NotFoundException::class => Response::HTTP_NOT_FOUND,
+        ConflictException::class => Response::HTTP_CONFLICT,
         InvalidValue::class => Response::HTTP_BAD_REQUEST,
     ];
 
-    /** @var array<string, int> exact-class overrides (conflicts); classes live in later modules, hence plain strings */
-    public const array CONFLICTS = [
-        'App\Session\Domain\Exception\SessionAlreadyScheduledForDay' => Response::HTTP_CONFLICT,
-        'App\Experience\Domain\Exception\ExperienceHasBookings' => Response::HTTP_CONFLICT,
-    ];
+    /** PostgreSQL `lock_not_available`: what `SET LOCAL lock_timeout` raises on a contended row. */
+    private const string LOCK_NOT_AVAILABLE = '55P03';
 
     public function __construct(
         #[Autowire(param: 'kernel.debug')]
@@ -40,7 +40,8 @@ final readonly class ProblemJsonExceptionListener
 
     public function __invoke(ExceptionEvent $event): void
     {
-        if (!str_starts_with($event->getRequest()->getPathInfo(), '/api')) {
+        $path = $event->getRequest()->getPathInfo();
+        if ('/api' !== $path && !str_starts_with($path, '/api/')) {
             return;
         }
 
@@ -48,12 +49,34 @@ final readonly class ProblemJsonExceptionListener
         [$status, $type, $detail, $extra] = $this->describe($exception);
 
         $body = ['type' => '/problems/' . $type, 'title' => $this->title($type), 'status' => $status, 'detail' => $detail] + $extra;
+
+        $event->setResponse(new JsonResponse($body, $status, $this->headers($status, $exception)));
+    }
+
+    /**
+     * Our own headers win; whatever else the exception carries (a 405's `Allow`, a 429's `Retry-After`) is kept.
+     *
+     * @return array<string, mixed>
+     */
+    private function headers(int $status, Throwable $exception): array
+    {
         $headers = ['Content-Type' => 'application/problem+json'];
         if (Response::HTTP_SERVICE_UNAVAILABLE === $status) {
             $headers['Retry-After'] = '1';
         }
 
-        $event->setResponse(new JsonResponse($body, $status, $headers));
+        if (!$exception instanceof HttpExceptionInterface) {
+            return $headers;
+        }
+
+        $reserved = array_map(strtolower(...), array_keys($headers));
+        foreach ($exception->getHeaders() as $name => $value) {
+            if (!\in_array(strtolower((string) $name), $reserved, true)) {
+                $headers[(string) $name] = $value;
+            }
+        }
+
+        return $headers;
     }
 
     /** @return array{int, string, string, array<string, mixed>} */
@@ -63,7 +86,11 @@ final readonly class ProblemJsonExceptionListener
             return [$this->domainStatus($exception), $exception->errorCode(), $exception->getMessage(), []];
         }
 
-        if ($exception instanceof LockWaitTimeoutException) {
+        // MySQL and SQLite converters raise LockWaitTimeoutException; PostgreSQL has no case for 55P03
+        // and hands back a plain DriverException, so both shapes have to be recognised here.
+        if ($exception instanceof LockWaitTimeoutException
+            || ($exception instanceof DriverException && self::LOCK_NOT_AVAILABLE === $exception->getSQLState())
+        ) {
             return [Response::HTTP_SERVICE_UNAVAILABLE, 'lock-timeout', 'The resource is busy, please retry.', []];
         }
 
@@ -88,9 +115,6 @@ final readonly class ProblemJsonExceptionListener
 
     private function domainStatus(DomainException $exception): int
     {
-        if (isset(self::CONFLICTS[$exception::class])) { // @phpstan-ignore isset.offset (CONFLICTS keys name classes from modules added in later tasks)
-            return self::CONFLICTS[$exception::class];
-        }
         foreach (self::DOMAIN_STATUS as $class => $status) {
             if ($exception instanceof $class) {
                 return $status;

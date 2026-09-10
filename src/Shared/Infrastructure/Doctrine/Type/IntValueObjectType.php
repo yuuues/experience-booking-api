@@ -4,14 +4,17 @@ declare(strict_types=1);
 
 namespace App\Shared\Infrastructure\Doctrine\Type;
 
+use App\Shared\Domain\IntValueObject;
 use Doctrine\DBAL\ParameterType;
 use Doctrine\DBAL\Platforms\AbstractPlatform;
+use Doctrine\DBAL\Types\Exception\InvalidType;
+use Doctrine\DBAL\Types\Exception\ValueNotConvertible;
 use Doctrine\DBAL\Types\Type;
 
 /**
- * Maps a `final readonly` value object exposing `public int $value` and `static fromInt(int)`.
+ * Maps a value object backed by a single integer. Subclasses name the VO class.
  *
- * @template T of object
+ * @template T of IntValueObject
  */
 abstract class IntValueObjectType extends Type
 {
@@ -24,24 +27,30 @@ abstract class IntValueObjectType extends Type
     }
 
     /** @return T|null */
-    public function convertToPHPValue(mixed $value, AbstractPlatform $platform): ?object
+    public function convertToPHPValue(mixed $value, AbstractPlatform $platform): ?IntValueObject
     {
         if (null === $value) {
             return null;
         }
 
-        /** @var T $vo */
-        $vo = static::valueObjectClass()::fromInt((int) $value); // @phpstan-ignore staticMethod.notFound, cast.int (T is unconstrained by design; DBAL hydrates an integer column as int|string)
+        // Drivers that stringify integer columns are still exact; anything else is a mapping bug.
+        if (\is_string($value) && (string) (int) $value === $value) {
+            $value = (int) $value;
+        }
 
-        return $vo;
+        if (!\is_int($value)) {
+            throw ValueNotConvertible::new($value, static::valueObjectClass());
+        }
+
+        return static::valueObjectClass()::fromInt($value);
     }
 
     public function convertToDatabaseValue(mixed $value, AbstractPlatform $platform): ?int
     {
         return match (true) {
             null === $value => null,
-            \is_object($value) && property_exists($value, 'value') => (int) $value->value, // @phpstan-ignore cast.int (guarded by property_exists; value objects expose a scalar $value)
-            default => (int) $value, // @phpstan-ignore cast.int (DBAL hydrates an integer column as int|string)
+            $value instanceof IntValueObject => $value->toInt(),
+            default => throw InvalidType::new($value, static::valueObjectClass(), ['null', IntValueObject::class]),
         };
     }
 

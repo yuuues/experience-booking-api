@@ -5,9 +5,9 @@ declare(strict_types=1);
 namespace App\Experience\Domain\Exception;
 
 use App\Experience\Domain\ExperienceId;
-use App\Shared\Domain\DomainException;
+use App\Shared\Domain\ConflictException;
 
-final class ExperienceHasBookings extends DomainException
+final class ExperienceHasBookings extends ConflictException
 {
     public static function withId(ExperienceId $id): self
     {

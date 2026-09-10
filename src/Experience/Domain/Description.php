@@ -5,8 +5,9 @@ declare(strict_types=1);
 namespace App\Experience\Domain;
 
 use App\Shared\Domain\InvalidValue;
+use App\Shared\Domain\StringValueObject;
 
-final readonly class Description
+final readonly class Description implements StringValueObject
 {
     public const int MAX_LENGTH = 2000;
 
@@ -23,5 +24,10 @@ final readonly class Description
         }
 
         return new self($value);
+    }
+
+    public function __toString(): string
+    {
+        return $this->value;
     }
 }

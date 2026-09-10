@@ -4,13 +4,16 @@ declare(strict_types=1);
 
 namespace App\Shared\Infrastructure\Doctrine\Type;
 
+use App\Shared\Domain\StringValueObject;
 use Doctrine\DBAL\Platforms\AbstractPlatform;
+use Doctrine\DBAL\Types\Exception\InvalidType;
+use Doctrine\DBAL\Types\Exception\ValueNotConvertible;
 use Doctrine\DBAL\Types\Type;
 
 /**
- * Maps a `final readonly` value object exposing `public string $value` and `static fromString(string)`.
+ * Maps a value object backed by a single string. Subclasses name the VO class.
  *
- * @template T of object
+ * @template T of StringValueObject
  */
 abstract class StringValueObjectType extends Type
 {
@@ -23,24 +26,25 @@ abstract class StringValueObjectType extends Type
     }
 
     /** @return T|null */
-    public function convertToPHPValue(mixed $value, AbstractPlatform $platform): ?object
+    public function convertToPHPValue(mixed $value, AbstractPlatform $platform): ?StringValueObject
     {
         if (null === $value) {
             return null;
         }
 
-        /** @var T $vo */
-        $vo = static::valueObjectClass()::fromString((string) $value); // @phpstan-ignore staticMethod.notFound, cast.string (T is unconstrained by design; DBAL hydrates a string column as string)
+        if (!\is_string($value)) {
+            throw ValueNotConvertible::new($value, static::valueObjectClass());
+        }
 
-        return $vo;
+        return static::valueObjectClass()::fromString($value);
     }
 
     public function convertToDatabaseValue(mixed $value, AbstractPlatform $platform): ?string
     {
         return match (true) {
             null === $value => null,
-            \is_object($value) && property_exists($value, 'value') => (string) $value->value, // @phpstan-ignore cast.string (guarded by property_exists; value objects expose a scalar $value)
-            default => (string) $value, // @phpstan-ignore cast.string (DBAL hydrates a string column as string)
+            $value instanceof StringValueObject => (string) $value,
+            default => throw InvalidType::new($value, static::valueObjectClass(), ['null', StringValueObject::class]),
         };
     }
 }

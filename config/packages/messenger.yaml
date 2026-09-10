@@ -1,14 +1,6 @@
 framework:
   messenger:
     failure_transport: failed
-    # Domain events are fire-and-forget: publishing one must not fail just because no
-    # handler subscribes to it yet (the `sync://` transport used in tests would otherwise
-    # raise "No handler for message" on every dispatch).
-    default_bus: messenger.bus.default
-    buses:
-      messenger.bus.default:
-        default_middleware:
-          allow_no_handlers: true
     transports:
       async:
         dsn: '%env(MESSENGER_TRANSPORT_DSN)%'
@@ -18,3 +10,18 @@ framework:
       failed: 'doctrine://default?queue_name=failed'
     routing:
       App\Shared\Domain\DomainEvent: async
+
+# Under the test transport (`sync://`), SendMessageMiddleware hands the message straight to
+# HandleMessageMiddleware inline instead of just enqueuing it, so dispatching a domain event
+# that intentionally has no consumer yet (e.g. ExperienceRegistered, before the booking email
+# handlers land) would otherwise fail with "No handler for message". In dev/prod the same
+# event routes to the `doctrine://` transport: SendMessageMiddleware sends it and stops there,
+# so HandleMessageMiddleware — and this setting — never runs.
+when@test:
+  framework:
+    messenger:
+      default_bus: messenger.bus.default
+      buses:
+        messenger.bus.default:
+          default_middleware:
+            allow_no_handlers: true

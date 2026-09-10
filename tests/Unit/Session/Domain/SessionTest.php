@@ -80,6 +80,34 @@ final class SessionTest extends TestCase
     }
 
     #[Test]
+    public function it_allows_booking_exactly_the_remaining_seats(): void
+    {
+        $session = self::aSession($this->clock, capacity: 3);
+
+        $session->book(BookingId::generate(), BookingReference::fromString('BK-00000001'), UserId::generate(), Seats::fromInt(3), $this->clock);
+
+        self::assertSame(0, $session->availableSeats());
+        self::assertSame(3, $session->bookedSeats());
+    }
+
+    #[Test]
+    public function overbooking_leaves_seat_counts_unchanged(): void
+    {
+        $session = self::aSession($this->clock, capacity: 3);
+        $session->book(BookingId::generate(), BookingReference::fromString('BK-00000001'), UserId::generate(), Seats::fromInt(2), $this->clock);
+
+        try {
+            $session->book(BookingId::generate(), BookingReference::fromString('BK-00000002'), UserId::generate(), Seats::fromInt(2), $this->clock);
+            self::fail('Expected NotEnoughSeatsAvailable to be thrown.');
+        } catch (NotEnoughSeatsAvailable) {
+            // expected
+        }
+
+        self::assertSame(2, $session->bookedSeats());
+        self::assertSame(1, $session->availableSeats());
+    }
+
+    #[Test]
     public function it_refuses_booking_once_started(): void
     {
         $session = self::aSession($this->clock, startsAt: '2026-10-05T10:00:00+00:00');
@@ -113,6 +141,25 @@ final class SessionTest extends TestCase
         $this->expectException(CancellationWindowClosed::class);
 
         $session->cancelBooking($booking, $this->clock);
+    }
+
+    #[Test]
+    public function cancellation_within_the_window_leaves_the_booking_confirmed_and_seats_consumed(): void
+    {
+        $session = self::aSession($this->clock, startsAt: '2026-10-05T10:00:00+00:00', capacity: 5);
+        $booking = $session->book(BookingId::generate(), BookingReference::fromString('BK-00000001'), UserId::generate(), Seats::fromInt(2), $this->clock);
+        $this->clock->travelTo('2026-10-04T10:00:01+00:00');
+
+        try {
+            $session->cancelBooking($booking, $this->clock);
+            self::fail('Expected CancellationWindowClosed to be thrown.');
+        } catch (CancellationWindowClosed) {
+            // expected
+        }
+
+        self::assertFalse($booking->isCancelled());
+        self::assertSame(3, $session->availableSeats());
+        self::assertSame(2, $session->bookedSeats());
     }
 
     #[Test]

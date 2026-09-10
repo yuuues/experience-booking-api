@@ -52,6 +52,8 @@ final class Session extends AggregateRoot
             throw SessionInThePast::at($startsAt);
         }
 
+        // The day is snapshotted here, in the platform time zone, on purpose: the (experience_id, day)
+        // unique index relies on this value staying stable once the session exists.
         $session = new self($id, $experienceId, $startsAt, $startsAt->dayIn($clock->timeZone()), $capacity, $price);
         $session->record(new SessionScheduled($id->value, $experienceId->value, $startsAt->toAtom(), $capacity->value, $clock->now()));
 
@@ -68,9 +70,10 @@ final class Session extends AggregateRoot
             throw NotEnoughSeatsAvailable::for($this->id, $seats->value, $this->availableSeats());
         }
 
+        $booking = Booking::confirm($bookingId, $reference, $this->id, $userId, $seats, $this->price->multiply($seats->value), $now);
         $this->bookedSeats += $seats->value;
 
-        return Booking::confirm($bookingId, $reference, $this->id, $userId, $seats, $this->price->multiply($seats->value), $now);
+        return $booking;
     }
 
     /**

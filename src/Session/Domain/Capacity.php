@@ -4,9 +4,10 @@ declare(strict_types=1);
 
 namespace App\Session\Domain;
 
+use App\Shared\Domain\IntValueObject;
 use App\Shared\Domain\InvalidValue;
 
-final readonly class Capacity
+final readonly class Capacity implements IntValueObject
 {
     private function __construct(public int $value) {}
 
@@ -17,5 +18,10 @@ final readonly class Capacity
         }
 
         return new self($value);
+    }
+
+    public function toInt(): int
+    {
+        return $this->value;
     }
 }

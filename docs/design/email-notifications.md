@@ -52,7 +52,10 @@ reserva: en una sesión con mucha demanda la petición debe ser lo más corta po
 el bloqueo de fila menos tiempo) y un SMTP caído no puede provocar que se pierdan reservas.
 Con el transporte Doctrine el mensaje se inserta en `messenger_messages` con la misma
 conexión y dentro de la misma transacción que la reserva: si el commit falla no hay correo;
-si el commit va bien, el correo no se pierde aunque el worker esté caído en ese momento.
+si el commit va bien, el correo no se pierde aunque el worker esté caído en ese momento. Esto
+no es solo una afirmación de diseño: `tests/Integration/Booking/OutboxAtomicityTest.php`
+construye un transporte `doctrine://` real y prueba las dos mitades directamente (ver
+"Cómo se prueba" más abajo).
 
 **Handlers idempotentes.** Messenger garantiza entrega *al menos una vez*: si el worker
 muere después de enviar y antes de confirmar el mensaje, lo reintentará. Cada handler consulta
@@ -82,8 +85,29 @@ partir de él; ninguna clase de dominio cruza esa frontera.
 
 - **Unitario**: los handlers con `InMemoryMailer`, `InMemorySentNotificationRegistry` y
   `FakeUserContactProvider`; se comprueba destinatario, contenido e idempotencia al reentregar.
+  Estos dobles nunca lanzan una violación de unicidad real, así que no cubren la línea que hace
+  que la idempotencia aguante concurrencia de verdad (ver el punto de integración siguiente).
+- **Integración**:
+  - `tests/Integration/Booking/DbalSentNotificationRegistryTest.php` ejercita el adaptador DBAL
+    real contra PostgreSQL, no el doble en memoria: `wasSent()` sobre un par desconocido, que
+    `markSent()` solo marca el `type` indicado (la PK es `(booking_reference, type)`, así que una
+    confirmación no suprime la cancelación de la misma reserva) y que una violación de unicidad
+    concurrente en `markSent()` se traga en lugar de propagarse.
+  - `tests/Integration/Booking/OutboxAtomicityTest.php` prueba la afirmación de atomicidad de
+    "Por qué así" de forma directa, no por inspección: construye un transporte `doctrine://` real
+    (no el `sync://` que usa el resto de la suite) desde la fábrica de transportes del contenedor,
+    aliada pública solo para este test en `config/services_test.yaml`, y comprueba que despachar
+    un evento dentro de `TransactionalRunner::run(...)` deja exactamente una fila en
+    `messenger_messages` cuando el callable termina bien, y cero filas cuando lanza. Es decir: el
+    mensaje vive y muere con la misma transacción que la reserva.
 - **Funcional**: con `MESSENGER_TRANSPORT_DSN=sync://` el handler corre dentro de la propia
-  petición y `MailerPort` está sustituido por `InMemoryMailer`; se afirma que reservar y
-  cancelar generan exactamente un correo cada uno, y que una reserva fallida no genera ninguno.
+  petición y `MailerPort` está sustituido por `InMemoryMailer`; se afirma que reservar y cancelar
+  generan exactamente un correo cada uno. `a_failed_booking_sends_nothing` reserva contra una
+  sesión inexistente: esto prueba "no hay reserva ⇒ no se crea el evento ⇒ no hay correo" (el
+  fallo ocurre en `findForUpdate()`, antes de que `Session::book()` llegue a registrar
+  `BookingConfirmed`), **no** la atomicidad del outbox — para eso está `OutboxAtomicityTest` de
+  arriba. Además, como este entorno usa `sync://`, ningún mensaje llega nunca a
+  `messenger_messages` en las pruebas funcionales; solo el test de integración construye un
+  transporte Doctrine real.
 - **Manual en dev**: `make up`, reservar con `curl`, `make logs` muestra al worker consumiendo
   el evento y al mailer registrando el envío con `null://`.

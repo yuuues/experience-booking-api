@@ -25,9 +25,19 @@ services:
     alias: App\Shared\Infrastructure\SystemClock
     public: true
 
+  App\Booking\Domain\Notification\SentNotificationRegistry:
+    alias: App\Booking\Infrastructure\Persistence\Doctrine\DbalSentNotificationRegistry
+    public: true
+
   # The functional test asserts on what was actually "sent"; the in-memory double captures it
   # instead of building a real Symfony\Component\Mime\Email through MAILER_DSN=null://null.
   App\Tests\Doubles\Booking\InMemoryMailer:
     public: true
 
   App\Booking\Domain\Notification\MailerPort: '@App\Tests\Doubles\Booking\InMemoryMailer'
+
+  # Only the outbox-atomicity integration test needs this: it builds a real doctrine:// transport
+  # directly (the suite otherwise runs Messenger on sync://, which never touches messenger_messages).
+  Symfony\Component\Messenger\Bridge\Doctrine\Transport\DoctrineTransportFactory:
+    alias: messenger.transport.doctrine.factory
+    public: true

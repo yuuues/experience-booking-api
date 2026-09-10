@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace App\Tests\Integration\Session;
 
+use App\Booking\Domain\BookingId;
+use App\Booking\Domain\BookingReference;
+use App\Booking\Domain\Seats;
+use App\Booking\Domain\UserId;
 use App\Experience\Domain\ExperienceRepository;
 use App\Session\Domain\Capacity;
 use App\Session\Domain\Exception\SessionAlreadyScheduledForDay;
@@ -53,6 +57,26 @@ final class DoctrineSessionRepositoryTest extends KernelTestCase
         self::assertSame(10, $found->capacity()->value);
         self::assertTrue($found->price()->equals(Money::fromPrimitives(1500, 'EUR')));
         self::assertSame(0, $found->bookedSeats());
+    }
+
+    #[Test]
+    public function booked_seats_survive_the_persistence_round_trip(): void
+    {
+        $clock = self::getContainer()->get(Clock::class);
+        $session = $this->aSession('+3 days 10:00');
+        $this->sessions->save($session);
+
+        // Discarded on purpose: the bookings table doesn't exist until Task 14, so this
+        // test only cares whether Session::book()'s mutation of $bookedSeats survives a
+        // save()/clear()/reload round trip, not about persisting the Booking itself.
+        $session->book(BookingId::generate(), BookingReference::fromString('BK-7F3A2C9K'), UserId::generate(), Seats::fromInt(3), $clock);
+        $this->sessions->save($session);
+        $this->entityManager->clear();
+
+        $found = $this->sessions->find($session->id());
+        self::assertNotNull($found);
+        self::assertSame(3, $found->bookedSeats());
+        self::assertSame(7, $found->availableSeats());
     }
 
     #[Test]

@@ -1,0 +1,18 @@
+parameters:
+  app.timezone: '%env(APP_TIMEZONE)%'
+  app.mailer_from: '%env(MAILER_FROM)%'
+
+services:
+  _defaults:
+    autowire: true
+    autoconfigure: true
+
+  App\:
+    resource: '../src/'
+    exclude:
+      - '../src/Kernel.php'
+      - '../src/*/Domain/'
+      - '../src/*/Application/**/*Command.php'
+      - '../src/*/Application/**/*Query.php'
+      - '../src/*/Application/*Response.php'
+      - '../src/*/Infrastructure/Http/*Request.php'

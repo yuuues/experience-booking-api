@@ -1,0 +1,19 @@
+includes:
+  - vendor/phpstan/phpstan-symfony/extension.neon
+  - vendor/phpstan/phpstan-doctrine/extension.neon
+  - vendor/phpstan/phpstan-doctrine/rules.neon
+
+parameters:
+  level: max
+  paths:
+    - src
+    - tests
+  symfony:
+    containerXmlPath: var/cache/test/App_KernelTestDebugContainer.xml
+  doctrine:
+    objectManagerLoader: tests/object-manager.php
+  tmpDir: var/phpstan
+  ignoreErrors:
+    -
+      identifier: method.unused
+      path: src/Kernel.php

@@ -47,7 +47,19 @@ $baseUrl = getenv('API_BASE_URL') ?: 'http://nginx';
 $capacity = (int) (getenv('CAPACITY') ?: 10);
 $attempts = (int) (getenv('ATTEMPTS') ?: 60);
 
-$http = HttpClient::create(['base_uri' => $baseUrl, 'timeout' => 30]);
+if ($attempts <= $capacity) {
+    fwrite(\STDERR, sprintf(
+        "ATTEMPTS (%d) must be greater than CAPACITY (%d): with attempts at or below capacity, every request could legitimately succeed and the probe proves nothing about overselling.\n",
+        $attempts,
+        $capacity,
+    ));
+    exit(1);
+}
+
+// HttpClient::create() defaults maxHostConnections to 6, which would silently cap how many of
+// the $attempts requests below can be in flight at once (queuing the rest inside curl, not at
+// the row lock). Raise it to $attempts so the requested concurrency is the real concurrency.
+$http = HttpClient::create(['base_uri' => $baseUrl, 'timeout' => 30], $attempts);
 
 $experience = $http->request('POST', '/api/experiences', ['json' => [
     'title' => 'Concurrency probe ' . date('H:i:s'),
@@ -64,11 +76,13 @@ $session = $http->request('POST', sprintf('/api/experiences/%s/sessions', $exper
 ]])->toArray();
 $sessionId = expectString($session, 'id');
 
-printf("Session %s with capacity %d — firing %d concurrent bookings…\n", $sessionId, $capacity, $attempts);
+printf("Session %s with capacity %d — firing %d bookings (up to %d in flight)…\n", $sessionId, $capacity, $attempts, $attempts);
 
 $responses = [];
 for ($i = 0; $i < $attempts; ++$i) {
-    // request() is lazy: all requests are in flight together, resolved in the stream() loop below.
+    // request() is lazy: it only registers the transfer with curl's multi-handle. With
+    // maxHostConnections raised to $attempts above, all of them can be handed off together here
+    // instead of queuing 6 at a time — resolved concurrently in the stream() loop below.
     $responses[] = $http->request('POST', sprintf('/api/sessions/%s/bookings', $sessionId), ['json' => [
         'userId' => Uuid::v7()->toRfc4122(),
         'seats' => 1,
@@ -101,6 +115,7 @@ foreach ($statuses as $code => $count) {
 printf("Booked seats: %d / %d (available: %d)\n", $bookedSeats, $finalCapacity, $availableSeats);
 
 $ok = ($statuses[201] ?? 0) === $capacity
+    && $finalCapacity === $capacity
     && $bookedSeats === $capacity
     && 0 === $availableSeats
     && ($statuses[201] ?? 0) + ($statuses[422] ?? 0) + ($statuses[503] ?? 0) === $attempts;

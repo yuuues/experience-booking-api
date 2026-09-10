@@ -1,0 +1,109 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Tests\Unit\Booking\Application;
+
+use App\Booking\Application\Book\BookSeatsCommand;
+use App\Booking\Application\Book\BookSeatsHandler;
+use App\Booking\Domain\BookingReference;
+use App\Booking\Domain\Event\BookingConfirmed;
+use App\Session\Domain\Exception\NotEnoughSeatsAvailable;
+use App\Session\Domain\Exception\SessionNotFound;
+use App\Tests\Doubles\Booking\InMemoryBookingRepository;
+use App\Tests\Doubles\Booking\SequentialBookingReferenceGenerator;
+use App\Tests\Doubles\Session\InMemorySessionRepository;
+use App\Tests\Doubles\Shared\FixedClock;
+use App\Tests\Doubles\Shared\InMemoryDomainEventPublisher;
+use App\Tests\Doubles\Shared\InMemoryTransactionalRunner;
+use App\Tests\Unit\Session\Domain\SessionTest;
+use PHPUnit\Framework\Attributes\Test;
+use PHPUnit\Framework\TestCase;
+
+final class BookSeatsHandlerTest extends TestCase
+{
+    private InMemorySessionRepository $sessions;
+    private InMemoryBookingRepository $bookings;
+    private InMemoryTransactionalRunner $transaction;
+    private InMemoryDomainEventPublisher $events;
+    private BookSeatsHandler $handler;
+    private string $sessionId;
+
+    protected function setUp(): void
+    {
+        $clock = new FixedClock('2026-10-01T10:00:00+00:00');
+        $this->sessions = new InMemorySessionRepository();
+        $this->bookings = new InMemoryBookingRepository($this->sessions);
+        $this->transaction = new InMemoryTransactionalRunner();
+        $this->events = new InMemoryDomainEventPublisher();
+        $this->handler = new BookSeatsHandler(
+            $this->sessions,
+            $this->bookings,
+            new SequentialBookingReferenceGenerator(),
+            $clock,
+            $this->transaction,
+            $this->events,
+        );
+
+        $session = SessionTest::aSession($clock, capacity: 5, priceAmount: 2000);
+        $this->sessions->save($session);
+        $this->sessionId = $session->id()->value;
+    }
+
+    #[Test]
+    public function it_books_inside_a_transaction_with_a_locked_session(): void
+    {
+        $response = ($this->handler)($this->command(seats: 2));
+
+        self::assertSame('BK-00000001', $response->reference);
+        self::assertSame('confirmed', $response->status);
+        self::assertSame(4000, $response->total->amount);
+        self::assertSame(1, $this->transaction->transactions);
+        self::assertSame(1, $this->sessions->lockedReads);
+        self::assertNotNull($this->bookings->findByReference(BookingReference::fromString('BK-00000001')));
+        self::assertSame(3, $this->sessions->find($this->session())?->availableSeats());
+        self::assertCount(1, $this->events->publishedOf(BookingConfirmed::class));
+    }
+
+    #[Test]
+    public function it_skips_references_already_taken(): void
+    {
+        // BookingTest::aBooking() carries reference BK-00000001, the first one the sequential generator yields.
+        $this->bookings->save(\App\Tests\Unit\Booking\Domain\BookingTest::aBooking());
+
+        $response = ($this->handler)($this->command(seats: 1));
+
+        self::assertSame('BK-00000002', $response->reference);
+    }
+
+    #[Test]
+    public function it_fails_when_not_enough_seats(): void
+    {
+        $this->expectException(NotEnoughSeatsAvailable::class);
+
+        ($this->handler)($this->command(seats: 6));
+    }
+
+    #[Test]
+    public function it_fails_when_session_missing(): void
+    {
+        $this->expectException(SessionNotFound::class);
+
+        ($this->handler)(new BookSeatsCommand('0192b3a4-1234-7abc-8def-0123456789b1', '0192b3a4-1234-7abc-8def-0123456789ff', '0192b3a4-1234-7abc-8def-0123456789ad', 1));
+    }
+
+    private function command(int $seats): BookSeatsCommand
+    {
+        return new BookSeatsCommand(
+            bookingId: \App\Booking\Domain\BookingId::generate()->value,
+            sessionId: $this->sessionId,
+            userId: '0192b3a4-1234-7abc-8def-0123456789ad',
+            seats: $seats,
+        );
+    }
+
+    private function session(): \App\Session\Domain\SessionId
+    {
+        return \App\Session\Domain\SessionId::fromString($this->sessionId);
+    }
+}

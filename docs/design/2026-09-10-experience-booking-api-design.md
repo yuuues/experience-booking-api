@@ -21,8 +21,11 @@ usuarios reservan la misma sesión a la vez.
 **Fuera del alcance** (se documenta en README, sección "Lo que haría en producción")
 
 - Autenticación/autorización. `providerId` y `userId` llegan en el body y son inventados.
+  En producción es imprescindible: la referencia de reserva es corta y enumerable, y una
+  reserva solo debe poder cancelarla su dueño.
 - Rate limiting (429). Iría en API gateway o Symfony RateLimiter por `userId`/IP en
-  `POST /sessions/{id}/bookings`.
+  `POST /sessions/{id}/bookings` y `POST /bookings/{reference}/cancellation`, como segunda
+  capa contra fuerza bruta de referencias y contra bots en sesiones muy demandadas.
 - Modelar proveedor y usuario: solo referencias por id.
 - Listados/paginación, borrado de recursos, cambios de aforo o precio de una sesión.
 - Envío real de correo: `MailerPort` con adaptador Symfony Mailer con DSN `null://`.
@@ -41,6 +44,7 @@ usuarios reservan la misma sesión a la vez.
 | Precio | Por plaza; `total = precio × plazas`; `Money` en céntimos + divisa ISO 4217 | Evita flotantes |
 | Límites de reserva | Solo los del enunciado: `seats ≥ 1` y `seats ≤ disponibles`; un usuario puede reservar varias veces la misma sesión | YAGNI |
 | Editar experiencia | `PUT` permitido solo si ninguna sesión tiene reservas **confirmadas** (canceladas no cuentan) | Regla de dominio real; se implementa al final, tras el núcleo |
+| Referencia de reserva | `BookingReference` pública y legible (`BK-` + 8 chars Crockford base32, única). La API y el correo usan la referencia; el `BookingId` (UUID) es interno (FKs, eventos) | Es lo habitual en reservas; un UUID no es usable por una persona |
 | DTOs | En toda frontera (HTTP↔App, App↔Mailer, eventos). Dentro del dominio circulan agregados y VOs | Evita CRUD anémico |
 | Ids | UUID v7 generados en servidor (en el controlador, antes del Command) | `201 + Location` sin ida extra a BD |
 | Mapping ORM | XML en `config/doctrine/`, custom types para VOs | Dominio sin referencia al ORM |
@@ -69,7 +73,7 @@ Cada módulo se divide en `Domain`, `Application`, `Infrastructure`.
   `bookedSeats` (int ≥ 0).
 - `static schedule(id, experienceId, startsAt, capacity, price, Clock): self`: lanza
   `SessionInThePast` si `startsAt <= now` → `SessionScheduled`.
-- `book(BookingId, UserId, Seats, Clock): Booking`:
+- `book(BookingId, BookingReference, UserId, Seats, Clock): Booking`:
   - `SessionAlreadyStarted` si `now >= startsAt`.
   - `NotEnoughSeatsAvailable` si `seats > capacity - bookedSeats`.
   - Incrementa `bookedSeats`, calcula `total = price × seats`, devuelve
@@ -83,9 +87,14 @@ Cada módulo se divide en `Domain`, `Application`, `Infrastructure`.
 
 **Booking**
 
-- Estado: `BookingId`, `SessionId`, `UserId`, `Seats`, `TotalPrice` (`Money`),
-  `BookingStatus` (enum `confirmed` | `cancelled`), `bookedAt`, `cancelledAt` (nullable).
+- Estado: `BookingId` (interno), `BookingReference` (pública), `SessionId`, `UserId`,
+  `Seats`, `TotalPrice` (`Money`), `BookingStatus` (enum `confirmed` | `cancelled`),
+  `bookedAt`, `cancelledAt` (nullable).
 - `static confirm(...)` (solo invocable desde `Session::book`) → `BookingConfirmed`.
+- `BookingReference`: formato `BK-XXXXXXXX`, 8 caracteres Crockford base32 (sin `I L O U`).
+  Se obtiene del puerto `BookingReferenceGenerator::next()`; adaptador real con
+  `random_bytes`, adaptador determinista en tests. Colisión (índice único) → el caso de uso
+  reintenta una vez con nueva referencia.
 - `cancel(now)`: `BookingAlreadyCancelled` si ya está cancelada → `BookingCancelled`.
 
 Reservar y cancelar modifican `Session` y `Booking` en una misma transacción. Es una
@@ -101,7 +110,7 @@ No cabe en un agregado. Lo resuelve el caso de uso con
 
 ### 3.3 Value Objects
 
-`ExperienceId`, `SessionId`, `BookingId`, `ProviderId`, `UserId` (UUID), `Title`,
+`ExperienceId`, `SessionId`, `BookingId`, `ProviderId`, `UserId` (UUID), `BookingReference`, `Title`,
 `Description`, `StartsAt`, `SessionDay`, `Capacity`, `Seats`, `Money`, `Email`,
 `ExperienceEditability`, `BookingStatus` (enum). Todos validan en el constructor: no puede
 existir un VO inválido.
@@ -138,9 +147,9 @@ devuelven agregados.
 | `FindExperience` | carga (404) → `ExperienceResponse` |
 | `ScheduleSession` | carga experiencia (404) → `existsForExperienceOn` (409) → `Session::schedule(clock)` → `save` → `SessionResponse` |
 | `FindSession` | carga (404) → `SessionResponse` (con `availableSeats`) |
-| `BookSeats` | **transacción**: `findForUpdate(sessionId)` (404) → `session->book(...)` → `save(session)`, `save(booking)` → publicar eventos → commit → `BookingResponse` |
-| `CancelBooking` | **transacción**: carga booking (404) → `findForUpdate(booking.sessionId)` → `session->cancelBooking(booking, clock)` → guarda ambos → publicar eventos → commit → `BookingResponse` |
-| `FindBooking` | carga (404) → `BookingResponse` |
+| `BookSeats` | **transacción**: `findForUpdate(sessionId)` (404) → `reference = generator->next()` → `session->book(...)` → `save(session)`, `save(booking)` → publicar eventos → commit → `BookingResponse`. Si la BD rechaza la referencia por duplicado, se repite la transacción una vez |
+| `CancelBooking` | **transacción**: `findByReference` (404) → `findForUpdate(booking.sessionId)` → `session->cancelBooking(booking, clock)` → guarda ambos → publicar eventos → commit → `BookingResponse` |
+| `FindBooking` | `findByReference` (404) → `BookingResponse` |
 
 Puertos en `Shared/Application`:
 
@@ -148,8 +157,9 @@ Puertos en `Shared/Application`:
 - `DomainEventPublisher::publish(DomainEvent ...)`.
 
 Puertos de repositorio (en `Domain` de cada módulo): `ExperienceRepository`,
-`SessionRepository` (con `findForUpdate`), `BookingRepository` (con
+`SessionRepository` (con `findForUpdate`), `BookingRepository` (con `findByReference` y
 `existsConfirmedForExperience`). Implementaciones Doctrine e in-memory (tests).
+Puerto `BookingReferenceGenerator` en `Booking/Domain`.
 
 ## 5. Eventos y correo (outbox)
 
@@ -160,7 +170,7 @@ Puertos de repositorio (en `Domain` de cada módulo): `ExperienceRepository`,
 3. Handlers asíncronos en `Booking/Application/Notify`:
    `SendBookingConfirmationEmailOnBookingConfirmed`, `SendBookingCancellationEmailOnBookingCancelled`.
    Resuelven el email con `UserContactProvider`, montan `BookingEmail` (DTO: to, subject,
-   bookingId, seats, total, sessionStartsAt) y llaman a `MailerPort::send(BookingEmail)`.
+   bookingReference, seats, total, sessionStartsAt) y llaman a `MailerPort::send(BookingEmail)`.
 4. Adaptadores de `MailerPort`: `SymfonyMailerAdapter` (DSN `null://` en dev) y
    `InMemoryMailer` (tests). `UserContactProvider`: `FakeUserContactProvider` →
    `user-{uuid}@example.test`.
@@ -175,7 +185,7 @@ Tablas:
 - `sessions(id uuid pk, experience_id uuid fk, starts_at timestamptz, day date, capacity int, price_amount bigint, price_currency char(3), booked_seats int default 0, created_at)`
   - `UNIQUE (experience_id, day)`
   - `CHECK (capacity > 0)`, `CHECK (booked_seats >= 0 AND booked_seats <= capacity)`
-- `bookings(id uuid pk, session_id uuid fk, user_id uuid, seats int, total_amount bigint, total_currency char(3), status varchar(16), booked_at timestamptz, cancelled_at timestamptz null)`
+- `bookings(id uuid pk, reference char(11) unique, session_id uuid fk, user_id uuid, seats int, total_amount bigint, total_currency char(3), status varchar(16), booked_at timestamptz, cancelled_at timestamptz null)`
   - índice `(session_id, status)`; `CHECK (seats > 0)`
 - `messenger_messages` (transporte Doctrine de Messenger).
 
@@ -197,8 +207,11 @@ Prefijo `/api`. JSON. Ids UUID v7.
 | `POST` | `/experiences/{id}/sessions` | `{startsAt: ISO 8601 con offset, capacity, price: {amount, currency}}` | `201`, `Location`, `SessionResponse` |
 | `GET` | `/sessions/{id}` | — | `200` |
 | `POST` | `/sessions/{id}/bookings` | `{userId, seats}` | `201`, `Location`, `BookingResponse` |
-| `GET` | `/bookings/{id}` | — | `200` |
-| `POST` | `/bookings/{id}/cancellation` | — | `200`, `BookingResponse` con `status: cancelled` |
+| `GET` | `/bookings/{reference}` | — | `200` |
+| `POST` | `/bookings/{reference}/cancellation` | — | `200`, `BookingResponse` con `status: cancelled` |
+
+Las reservas se identifican públicamente por su referencia (`BK-…`); el UUID interno no se
+expone. `Location: /api/bookings/BK-7F3A2C9K`.
 
 Cancelación como `POST …/cancellation` (no `DELETE`): la reserva no se borra, cambia de
 estado.
@@ -207,7 +220,7 @@ DTOs de respuesta:
 
 - `ExperienceResponse {id, title, description, providerId}`
 - `SessionResponse {id, experienceId, startsAt, capacity, bookedSeats, availableSeats, price: {amount, currency}}`
-- `BookingResponse {id, sessionId, userId, seats, total: {amount, currency}, status, bookedAt, cancelledAt}`
+- `BookingResponse {reference, sessionId, userId, seats, total: {amount, currency}, status, bookedAt, cancelledAt}`
 
 Request DTOs validados con Symfony Validator (forma y tipos); las reglas de negocio se
 validan en el dominio.
@@ -229,9 +242,9 @@ src/
 │   ├── Application/     Schedule/, Find/
 │   └── Infrastructure/  Http/, Persistence/Doctrine/
 └── Booking/
-    ├── Domain/          Booking, BookingStatus, UserId, BookingRepository, UserContactProvider, MailerPort, BookingEmail, events/, exceptions/
+    ├── Domain/          Booking, BookingReference, BookingReferenceGenerator, BookingStatus, UserId, BookingRepository, UserContactProvider, MailerPort, BookingEmail, events/, exceptions/
     ├── Application/     Book/, Cancel/, Find/, Notify/
-    └── Infrastructure/  Http/, Persistence/Doctrine/, Contact/ (FakeUserContactProvider), Mailer/ (SymfonyMailerAdapter, InMemoryMailer)
+    └── Infrastructure/  Http/, Persistence/Doctrine/, Reference/ (RandomBookingReferenceGenerator), Contact/ (FakeUserContactProvider), Mailer/ (SymfonyMailerAdapter, InMemoryMailer)
 
 config/doctrine/*.orm.xml
 tests/ (mismo árbol: Unit/, Integration/, Functional/, Concurrency/)
@@ -262,6 +275,8 @@ PHPStan 2.2 nivel max, PHP-CS-Fixer (PSR-12), `declare(strict_types=1)` en todo.
 2. Arquitectura: hexagonal, módulos, DTOs en fronteras, flujo de una reserva.
 3. Decisiones (tabla de §2) y supuestos sobre el enunciado.
 4. Concurrencia: por qué `FOR UPDATE` + `CHECK`, y el test que lo demuestra.
-5. **Lo que haría en producción**: rate limiting (429), autenticación, read models/CQRS
-   para catálogo, envío real de correo con reintentos y dead-letter, observabilidad,
-   límite de plazas por reserva si negocio lo pide.
+5. **Lo que haría en producción**: autenticación/autorización (la referencia `BK-…` es
+   enumerable; solo el dueño debe cancelar), rate limiting (429) en reservar y cancelar
+   como segunda capa contra fuerza bruta y bots, read models/CQRS para catálogo, envío real
+   de correo con reintentos y dead-letter, observabilidad, límite de plazas por reserva si
+   negocio lo pide.

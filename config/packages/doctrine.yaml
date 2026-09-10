@@ -1,7 +1,11 @@
 doctrine:
   dbal:
     url: '%env(resolve:DATABASE_URL)%'
-    types: {}
+    types:
+      experience_id: App\Experience\Infrastructure\Persistence\Doctrine\Type\ExperienceIdType
+      provider_id: App\Experience\Infrastructure\Persistence\Doctrine\Type\ProviderIdType
+      experience_title: App\Experience\Infrastructure\Persistence\Doctrine\Type\TitleType
+      experience_description: App\Experience\Infrastructure\Persistence\Doctrine\Type\DescriptionType
   orm:
     enable_native_lazy_objects: true
     naming_strategy: doctrine.orm.naming_strategy.underscore_number_aware

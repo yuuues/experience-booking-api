@@ -12,7 +12,7 @@ use PHPUnit\Framework\TestCase;
 final class MoneyTest extends TestCase
 {
     #[Test]
-    public function itMultipliesKeepingCurrency(): void
+    public function it_multiplies_keeping_currency(): void
     {
         $price = Money::fromPrimitives(1550, 'EUR');
 
@@ -23,7 +23,7 @@ final class MoneyTest extends TestCase
     }
 
     #[Test]
-    public function itRejectsNegativeAmount(): void
+    public function it_rejects_negative_amount(): void
     {
         $this->expectException(InvalidValue::class);
 
@@ -31,7 +31,7 @@ final class MoneyTest extends TestCase
     }
 
     #[Test]
-    public function itRejectsMalformedCurrency(): void
+    public function it_rejects_malformed_currency(): void
     {
         $this->expectException(InvalidValue::class);
 
@@ -39,7 +39,7 @@ final class MoneyTest extends TestCase
     }
 
     #[Test]
-    public function itComparesByValue(): void
+    public function it_compares_by_value(): void
     {
         self::assertTrue(Money::fromPrimitives(100, 'EUR')->equals(Money::fromPrimitives(100, 'EUR')));
         self::assertFalse(Money::fromPrimitives(100, 'EUR')->equals(Money::fromPrimitives(100, 'USD')));

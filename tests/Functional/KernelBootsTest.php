@@ -10,7 +10,7 @@ use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 final class KernelBootsTest extends KernelTestCase
 {
     #[Test]
-    public function kernelBootsInTestEnvironment(): void
+    public function kernel_boots_in_test_environment(): void
     {
         $kernel = self::bootKernel();
 

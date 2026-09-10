@@ -12,7 +12,7 @@ use PHPUnit\Framework\TestCase;
 final class UuidTest extends TestCase
 {
     #[Test]
-    public function itGeneratesAValidUuid(): void
+    public function it_generates_a_valid_uuid(): void
     {
         $id = TestId::generate();
 
@@ -20,7 +20,7 @@ final class UuidTest extends TestCase
     }
 
     #[Test]
-    public function itNormalizesToLowercase(): void
+    public function it_normalizes_to_lowercase(): void
     {
         $id = TestId::fromString('0192B3A4-1234-7ABC-8DEF-0123456789AB');
 
@@ -29,7 +29,7 @@ final class UuidTest extends TestCase
     }
 
     #[Test]
-    public function itRejectsInvalidUuid(): void
+    public function it_rejects_invalid_uuid(): void
     {
         $this->expectException(InvalidValue::class);
 
@@ -37,7 +37,7 @@ final class UuidTest extends TestCase
     }
 
     #[Test]
-    public function equalityRequiresSameClassAndValue(): void
+    public function equality_requires_same_class_and_value(): void
     {
         $a = TestId::fromString('0192b3a4-1234-7abc-8def-0123456789ab');
         $b = TestId::fromString('0192b3a4-1234-7abc-8def-0123456789ab');

@@ -13,7 +13,7 @@ use PHPUnit\Framework\TestCase;
 final class AggregateRootTest extends TestCase
 {
     #[Test]
-    public function itRecordsAndReleasesEventsOnce(): void
+    public function it_records_and_releases_events_once(): void
     {
         $aggregate = new class extends AggregateRoot {
             public function doSomething(): void

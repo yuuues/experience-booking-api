@@ -19,7 +19,7 @@ script:pre-request {
   // con el indice unico (experience_id, day) sin tocar la ventana horaria de otra prueba.
   const base = new Date(bru.getVar("session1StartsAt"));
   base.setUTCHours(base.getUTCHours() + 4);
-  bru.setVar("startsAtSameDay", base.toISOString().replace(/\.\d{3}Z$/, "+00:00"));
+  bru.setVar("startsAtSameDay", base.toISOString());
 }
 
 body:json {

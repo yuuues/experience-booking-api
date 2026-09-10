@@ -18,7 +18,7 @@ script:pre-request {
   // Un dia futuro que no colisiona con ninguna sesion anterior; no deberia importar porque la
   // peticion falla antes, en la validacion de forma.
   const future = new Date(Date.now() + 20 * 24 * 60 * 60 * 1000);
-  bru.setVar("startsAtFarFuture", future.toISOString().replace(/\.\d{3}Z$/, "+00:00"));
+  bru.setVar("startsAtFarFuture", future.toISOString());
 }
 
 body:json {

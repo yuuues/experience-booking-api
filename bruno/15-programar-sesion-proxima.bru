@@ -19,7 +19,7 @@ script:pre-request {
   // cancelar tan cerca del inicio esta bloqueado. Distinto dia natural que las sesiones
   // anteriores para no chocar con la regla de "un dia por experiencia".
   const soon = new Date(Date.now() + 5 * 60 * 60 * 1000);
-  bru.setVar("startsAtSoon", soon.toISOString().replace(/\.\d{3}Z$/, "+00:00"));
+  bru.setVar("startsAtSoon", soon.toISOString());
 }
 
 body:json {

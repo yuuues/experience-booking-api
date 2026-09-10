@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Tests\Functional\Session;
 
 use DateTimeImmutable;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use Symfony\Bundle\FrameworkBundle\KernelBrowser;
 use Symfony\Bundle\FrameworkBundle\Test\WebTestCase;
@@ -71,6 +72,54 @@ final class SessionApiTest extends WebTestCase
 
         self::assertResponseStatusCodeSame(422);
         self::assertSame('/problems/session-in-the-past', $this->json()['type']);
+    }
+
+    #[Test]
+    #[DataProvider('acceptableStartsAt')]
+    public function it_accepts_any_iso8601_instant_with_an_explicit_zone(string $startsAt, string $normalised): void
+    {
+        $this->client->jsonRequest('POST', "/api/experiences/{$this->experienceId}/sessions", [
+            'startsAt' => $startsAt, 'capacity' => 5, 'price' => ['amount' => 100, 'currency' => 'EUR'],
+        ]);
+
+        self::assertResponseStatusCodeSame(201);
+        $body = $this->json();
+        self::assertSame($normalised, $body['startsAt']);
+        // Whatever designator came in (`Z` or a numeric offset), the response always normalises
+        // to a numeric UTC offset: the API never echoes back a bare `Z`.
+        self::assertStringEndsWith('+00:00', $body['startsAt']);
+    }
+
+    /** @return iterable<string, array{0: string, 1: string}> */
+    public static function acceptableStartsAt(): iterable
+    {
+        yield 'numeric offset' => ['2026-09-14T10:00:00+02:00', '2026-09-14T08:00:00+00:00'];
+        yield 'Z designator' => ['2026-09-14T10:00:00Z', '2026-09-14T10:00:00+00:00'];
+        yield 'Z designator with milliseconds' => ['2026-09-14T10:00:00.000Z', '2026-09-14T10:00:00+00:00'];
+        yield 'zero numeric offset' => ['2026-09-14T08:00:00+00:00', '2026-09-14T08:00:00+00:00'];
+    }
+
+    #[Test]
+    #[DataProvider('invalidStartsAt')]
+    public function it_rejects_starts_at_without_an_explicit_zone_or_shape(string $startsAt): void
+    {
+        $this->client->jsonRequest('POST', "/api/experiences/{$this->experienceId}/sessions", [
+            'startsAt' => $startsAt, 'capacity' => 5, 'price' => ['amount' => 100, 'currency' => 'EUR'],
+        ]);
+
+        self::assertResponseStatusCodeSame(400);
+        $errors = $this->json()['errors'];
+        self::assertIsArray($errors);
+        self::assertContains('startsAt', array_column($errors, 'field'));
+    }
+
+    /** @return iterable<string, array{0: string}> */
+    public static function invalidStartsAt(): iterable
+    {
+        yield 'plain word' => ['tomorrow'];
+        yield 'date only, no time' => ['2026-09-14'];
+        yield 'no explicit zone, ambiguous' => ['2026-09-14T10:00:00'];
+        yield 'garbage' => ['not-a-date'];
     }
 
     #[Test]

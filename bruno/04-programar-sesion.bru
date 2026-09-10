@@ -19,11 +19,11 @@ script:pre-request {
   // se calcula aqui en vez de venir escrito a fuego. Se fija a las 10:00 UTC de dentro de 7
   // dias y se guarda como variable global para que los pasos 11 (mismo dia) y 17 (fuera de la
   // ventana de cancelacion) puedan construir sus propias fechas relativas a esta.
-  // El DTO exige el formato ATOM exacto (offset numerico, sin milisegundos), asi que se
-  // convierte el "Z" y los milisegundos de toISOString() a "+00:00".
+  // toISOString() tal cual (con su "Z" y sus milisegundos): la API acepta cualquier instante
+  // ISO 8601 con zona explicita, que es justo lo que emite un cliente HTTP normal.
   const base = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
   base.setUTCHours(10, 0, 0, 0);
-  bru.setVar("session1StartsAt", base.toISOString().replace(/\.\d{3}Z$/, "+00:00"));
+  bru.setVar("session1StartsAt", base.toISOString());
 }
 
 body:json {

@@ -56,7 +56,9 @@ Prefijo `/api`. JSON de entrada y salida. Los ids son UUID v7 generados en el se
 | `GET` | `/api/bookings/{reference}` | — | `200` |
 | `POST` | `/api/bookings/{reference}/cancellation` | — | `200`, reserva con `status: cancelled` |
 
-Ocho rutas, las mismas que lista `make console c="debug:router"`.
+Ocho rutas, las mismas que lista `make console c="debug:router"`. `startsAt` acepta cualquier
+instante ISO 8601 con zona explícita (`Z` o un offset numérico como `+02:00`), con o sin segundos
+fraccionarios; una hora local sin zona se rechaza por ambigua.
 
 ### 2.1 Flujo completo
 

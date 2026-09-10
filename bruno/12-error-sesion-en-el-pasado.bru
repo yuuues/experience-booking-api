@@ -18,7 +18,7 @@ script:pre-request {
   // Un dia distinto al de las sesiones anteriores (ayer), para que falle por ser pasado y no
   // por chocar con el indice de unicidad de dia.
   const past = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  bru.setVar("startsAtPast", past.toISOString().replace(/\.\d{3}Z$/, "+00:00"));
+  bru.setVar("startsAtPast", past.toISOString());
 }
 
 body:json {

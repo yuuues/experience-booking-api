@@ -93,8 +93,9 @@ Cada módulo se divide en `Domain`, `Application`, `Infrastructure`.
 - `static confirm(...)` (solo invocable desde `Session::book`) → `BookingConfirmed`.
 - `BookingReference`: formato `BK-XXXXXXXX`, 8 caracteres Crockford base32 (sin `I L O U`).
   Se obtiene del puerto `BookingReferenceGenerator::next()`; adaptador real con
-  `random_bytes`, adaptador determinista en tests. Colisión (índice único) → el caso de uso
-  reintenta una vez con nueva referencia.
+  `random_int`, adaptador determinista en tests. El caso de uso pide referencias al
+  generador hasta obtener una que no exista (`existsByReference`); el índice único es la red
+  de seguridad final.
 - `cancel(now)`: `BookingAlreadyCancelled` si ya está cancelada → `BookingCancelled`.
 
 Reservar y cancelar modifican `Session` y `Booking` en una misma transacción. Es una
@@ -129,7 +130,7 @@ existir un VO inválido.
 | `ExperienceNotFound`, `SessionNotFound`, `BookingNotFound` | 404 |
 | `SessionAlreadyScheduledForDay`, `ExperienceHasBookings` | 409 |
 | `SessionInThePast`, `SessionAlreadyStarted`, `NotEnoughSeatsAvailable`, `BookingAlreadyCancelled`, `CancellationWindowClosed` | 422 |
-| Validación de forma del request | 400 |
+| Validación de forma del request, `InvalidValue` (VO mal formado que pasó la validación de forma) | 400 |
 | Lock timeout en BD | 503 + `Retry-After` |
 
 Todos los errores en `application/problem+json` (RFC 7807): `type`, `title`, `status`,
@@ -147,7 +148,7 @@ devuelven agregados.
 | `FindExperience` | carga (404) → `ExperienceResponse` |
 | `ScheduleSession` | carga experiencia (404) → `existsForExperienceOn` (409) → `Session::schedule(clock)` → `save` → `SessionResponse` |
 | `FindSession` | carga (404) → `SessionResponse` (con `availableSeats`) |
-| `BookSeats` | **transacción**: `findForUpdate(sessionId)` (404) → `reference = generator->next()` → `session->book(...)` → `save(session)`, `save(booking)` → publicar eventos → commit → `BookingResponse`. Si la BD rechaza la referencia por duplicado, se repite la transacción una vez |
+| `BookSeats` | **transacción**: `findForUpdate(sessionId)` (404) → `reference = generator->next()` hasta que `!existsByReference` → `session->book(...)` → `save(session)`, `save(booking)` → publicar eventos → commit → `BookingResponse` |
 | `CancelBooking` | **transacción**: `findByReference` (404) → `findForUpdate(booking.sessionId)` → `session->cancelBooking(booking, clock)` → guarda ambos → publicar eventos → commit → `BookingResponse` |
 | `FindBooking` | `findByReference` (404) → `BookingResponse` |
 
@@ -174,20 +175,21 @@ Puerto `BookingReferenceGenerator` en `Booking/Domain`.
 4. Adaptadores de `MailerPort`: `SymfonyMailerAdapter` (DSN `null://` en dev) y
    `InMemoryMailer` (tests). `UserContactProvider`: `FakeUserContactProvider` →
    `user-{uuid}@example.test`.
-5. Idempotencia: los handlers de correo son idempotentes por `(bookingId, tipo)` (tabla
-   `sent_emails` o clave en el DTO) por si Messenger reintenta.
+5. Idempotencia: los handlers de correo consultan/marcan `SentNotificationRegistry`
+   (tabla `sent_notifications`, clave `(booking_reference, type)`) por si Messenger reintenta.
 
 ## 6. Persistencia
 
 Tablas:
 
-- `experiences(id uuid pk, title varchar(150), description text, provider_id uuid, created_at, updated_at)`
-- `sessions(id uuid pk, experience_id uuid fk, starts_at timestamptz, day date, capacity int, price_amount bigint, price_currency char(3), booked_seats int default 0, created_at)`
+- `experiences(id uuid pk, title varchar(150), description text, provider_id uuid)`
+- `sessions(id uuid pk, experience_id uuid fk, starts_at timestamptz, day date, capacity int, price_amount bigint, price_currency char(3), booked_seats int default 0)`
   - `UNIQUE (experience_id, day)`
   - `CHECK (capacity > 0)`, `CHECK (booked_seats >= 0 AND booked_seats <= capacity)`
 - `bookings(id uuid pk, reference char(11) unique, session_id uuid fk, user_id uuid, seats int, total_amount bigint, total_currency char(3), status varchar(16), booked_at timestamptz, cancelled_at timestamptz null)`
   - índice `(session_id, status)`; `CHECK (seats > 0)`
-- `messenger_messages` (transporte Doctrine de Messenger).
+- `sent_notifications(booking_reference char(11), type varchar(32), sent_at timestamptz, pk(booking_reference, type))` — idempotencia del correo.
+- `messenger_messages` (transporte Doctrine de Messenger, creada con `messenger:setup-transports`).
 
 Concurrencia: `SessionRepository::findForUpdate` hace `SELECT … FOR UPDATE` sobre `sessions`.
 Distintas sesiones no se bloquean entre sí. `lock_timeout` corto (p. ej. 2 s) configurado en

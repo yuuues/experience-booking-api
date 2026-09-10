@@ -6,6 +6,10 @@ doctrine:
       provider_id: App\Experience\Infrastructure\Persistence\Doctrine\Type\ProviderIdType
       experience_title: App\Experience\Infrastructure\Persistence\Doctrine\Type\TitleType
       experience_description: App\Experience\Infrastructure\Persistence\Doctrine\Type\DescriptionType
+      session_id: App\Session\Infrastructure\Persistence\Doctrine\Type\SessionIdType
+      session_starts_at: App\Session\Infrastructure\Persistence\Doctrine\Type\StartsAtType
+      session_day: App\Session\Infrastructure\Persistence\Doctrine\Type\SessionDayType
+      session_capacity: App\Session\Infrastructure\Persistence\Doctrine\Type\CapacityType
   orm:
     enable_native_lazy_objects: true
     naming_strategy: doctrine.orm.naming_strategy.underscore_number_aware

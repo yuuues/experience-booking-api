@@ -8,3 +8,11 @@ services:
   App\Experience\Domain\ExperienceRepository:
     alias: App\Experience\Infrastructure\Persistence\Doctrine\DoctrineExperienceRepository
     public: true
+
+  App\Session\Domain\SessionRepository:
+    alias: App\Session\Infrastructure\Persistence\Doctrine\DoctrineSessionRepository
+    public: true
+
+  App\Shared\Domain\Clock:
+    alias: App\Shared\Infrastructure\SystemClock
+    public: true

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<doctrine-mapping xmlns="http://doctrine-project.org/schemas/orm/doctrine-mapping"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  xsi:schemaLocation="http://doctrine-project.org/schemas/orm/doctrine-mapping
+                                      https://www.doctrine-project.org/schemas/orm/doctrine-mapping.xsd">
+  <entity name="App\Session\Domain\Session" table="sessions">
+    <id name="id" type="session_id" column="id"/>
+    <field name="experienceId" type="experience_id" column="experience_id"/>
+    <field name="startsAt" type="session_starts_at" column="starts_at"/>
+    <field name="day" type="session_day" column="day"/>
+    <field name="capacity" type="session_capacity" column="capacity"/>
+    <field name="bookedSeats" type="integer" column="booked_seats"/>
+    <embedded name="price" class="App\Shared\Domain\Money" column-prefix="price_"/>
+  </entity>
+</doctrine-mapping>

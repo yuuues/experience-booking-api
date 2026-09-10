@@ -8,8 +8,10 @@ use App\Booking\Application\Book\BookSeatsCommand;
 use App\Booking\Application\Book\BookSeatsHandler;
 use App\Booking\Domain\BookingReference;
 use App\Booking\Domain\Event\BookingConfirmed;
+use App\Booking\Domain\Exception\BookingReferenceExhausted;
 use App\Session\Domain\Exception\NotEnoughSeatsAvailable;
 use App\Session\Domain\Exception\SessionNotFound;
+use App\Tests\Doubles\Booking\AlwaysSameBookingReferenceGenerator;
 use App\Tests\Doubles\Booking\InMemoryBookingRepository;
 use App\Tests\Doubles\Booking\SequentialBookingReferenceGenerator;
 use App\Tests\Doubles\Session\InMemorySessionRepository;
@@ -83,6 +85,39 @@ final class BookSeatsHandlerTest extends TestCase
         $response = ($this->handler)($this->command(seats: 1));
 
         self::assertSame('BK-00000002', $response->reference);
+    }
+
+    #[Test]
+    public function it_exhausts_reference_attempts_and_changes_nothing(): void
+    {
+        $taken = BookingReference::fromString('BK-00000001');
+        $this->bookings->save(\App\Tests\Unit\Booking\Domain\BookingTest::aBooking());
+        $this->bookings->resetSaveTracking();
+
+        $generator = new AlwaysSameBookingReferenceGenerator($taken);
+        $handler = new BookSeatsHandler(
+            $this->sessions,
+            $this->bookings,
+            $generator,
+            new FixedClock('2026-10-01T10:00:00+00:00'),
+            $this->transaction,
+            $this->events,
+        );
+
+        try {
+            $handler($this->command(seats: 1));
+            self::fail('Expected BookingReferenceExhausted to be thrown.');
+        } catch (BookingReferenceExhausted) {
+            // Pins the bound itself, not just the exception: the generator is asked exactly
+            // MAX_REFERENCE_ATTEMPTS times, never more, never fewer.
+            self::assertSame(5, $generator->calls);
+            // No new booking was saved: only the one seeded directly above remains.
+            self::assertCount(1, $this->bookings->all());
+            self::assertSame([], $this->bookings->saveTransactionStates);
+            // The session was never touched: no lock taken, no seats consumed.
+            self::assertSame(0, $this->sessions->lockedReads);
+            self::assertSame(5, $this->sessions->find($this->session())?->availableSeats());
+        }
     }
 
     #[Test]

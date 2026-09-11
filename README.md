@@ -490,6 +490,26 @@ real que escribe la aplicación al programar la sesión, no una expresión deriv
 Si se hubiera derivado, en MySQL habría hecho falta una columna generada o un índice funcional
 (8.0.13+) para poder indexarla.
 
+### 5.7 Rendimiento medido bajo carga (orden de magnitud, no un benchmark)
+
+Lo interesante no es el número de reservas por segundo, sino que **el bloqueo pesa menos del
+10% de la petición** y que el fallo bajo carga es cola, no `503`. Medido en `APP_ENV=prod`, con
+caché de prod calentada y opcache sin revalidar (`validate_timestamps=0`): en `dev` esa misma
+reserva tarda 7.977 ms, pero eso mide el contenedor y el bind mount de Windows, no la
+aplicación, y sin fijar el opcache la latencia en prod es bimodal por la revalidación cada 2 s.
+Corregido eso, una reserva sin contención son 112 ms: ~49 ms de arranque de Symfony/php-fpm,
+~57 ms de trabajo propio de la petición (Serializer, Doctrine, Messenger) y 5,8 ms de base de
+datos, de los que solo 5,0 ms quedan bajo el `FOR UPDATE`.
+
+Una sola sesión caliente sostiene ~115-140 reservas/s, plano desde 16 clientes concurrentes en
+adelante: más concurrencia solo alarga la cola. Con 1000 reservas simultáneas contra una sesión
+de aforo 1000 no hubo ni un `503` (1000×`201`, `bookedSeats` exacto, sin sobreventa), porque
+`pm.max_children = 32` actúa como control de admisión y limita la cola del bloqueo a ~21
+peticiones, muy por debajo del `lock_timeout` de 2 s.
+
+Medido en un portátil con Docker Desktop en Windows, cliente y servidor en la misma máquina y
+una única instancia de PostgreSQL sin ajustar: tómese como orden de magnitud, no como cota.
+
 ---
 
 ## 6. Correo

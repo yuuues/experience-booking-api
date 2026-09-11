@@ -1,7 +1,7 @@
 # Diseño: API de gestión de reservas de experiencias
 
 Fecha: 2026-09-10
-Estado: aprobado en conversación, pendiente de revisión escrita
+Estado: aprobado
 
 ## 1. Objetivo y alcance
 

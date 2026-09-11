@@ -16,6 +16,8 @@ final class InMemoryBookingRepository implements BookingRepository
     /** @var array<string, Booking> keyed by reference */
     private array $items = [];
 
+    public int $lockedReads = 0;
+
     /** @var list<bool> whether each save() call happened while the injected runner reported a transaction open */
     public array $saveTransactionStates = [];
 
@@ -37,6 +39,14 @@ final class InMemoryBookingRepository implements BookingRepository
 
     public function findByReference(BookingReference $reference): ?Booking
     {
+        return $this->items[$reference->value] ?? null;
+    }
+
+    /** Stands in for `SELECT … FOR UPDATE` on the booking row; counted so tests can pin that the lock is taken. */
+    public function findByReferenceForUpdate(BookingReference $reference): ?Booking
+    {
+        ++$this->lockedReads;
+
         return $this->items[$reference->value] ?? null;
     }
 

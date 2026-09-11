@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Tests\Integration\Booking;
 
+use App\Booking\Domain\Booking;
 use App\Booking\Domain\BookingId;
 use App\Booking\Domain\BookingReference;
 use App\Booking\Domain\BookingRepository;
@@ -104,6 +105,42 @@ final class DoctrineBookingRepositoryTest extends KernelTestCase
         self::assertNotNull($bookingCancelledAt);
         self::assertNotNull($foundCancelledAt);
         self::assertSame($bookingCancelledAt->getTimestamp(), $foundCancelledAt->getTimestamp());
+    }
+
+    #[Test]
+    public function find_by_reference_for_update_returns_the_committed_row_even_when_the_booking_is_already_managed(): void
+    {
+        $reference = BookingReference::fromString('BK-7F3A2C9K');
+        $booking = $this->session->book(BookingId::generate(), $reference, UserId::generate(), Seats::fromInt(2), $this->clock);
+        $this->sessions->save($this->session);
+        $this->bookings->save($booking);
+        $this->entityManager->clear();
+
+        // Managed and confirmed in this unit of work, like a cancellation that read the booking early.
+        $early = $this->bookings->findByReference($reference);
+        self::assertNotNull($early);
+        self::assertFalse($early->isCancelled());
+
+        // A concurrent cancellation commits behind the identity map's back.
+        $this->entityManager->getConnection()->executeStatement(
+            "UPDATE bookings SET status = 'cancelled', cancelled_at = now() WHERE reference = :reference",
+            ['reference' => $reference->value],
+        );
+
+        $locked = $this->entityManager->wrapInTransaction(fn(): ?Booking => $this->bookings->findByReferenceForUpdate($reference));
+
+        // A stale answer here is exactly what let two cancellations release the same seats.
+        self::assertNotNull($locked);
+        self::assertTrue($locked->isCancelled());
+        self::assertNotNull($locked->cancelledAt());
+    }
+
+    #[Test]
+    public function find_by_reference_for_update_returns_null_for_an_unknown_reference(): void
+    {
+        $found = $this->entityManager->wrapInTransaction(fn(): ?Booking => $this->bookings->findByReferenceForUpdate(BookingReference::fromString('BK-00000000')));
+
+        self::assertNull($found);
     }
 
     #[Test]

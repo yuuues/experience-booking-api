@@ -45,8 +45,8 @@ test-unit: ## Run unit tests only (no database)
 CAPACITY ?= 10
 ATTEMPTS ?= 60
 
-test-concurrency: ## Fire concurrent bookings against the running API (override: make test-concurrency CAPACITY=1 ATTEMPTS=100)
-	$(COMPOSE) exec -T -e CAPACITY=$(CAPACITY) -e ATTEMPTS=$(ATTEMPTS) php php bin/concurrency-test
+test-concurrency: ## Fire concurrent bookings against the running API (override: make test-concurrency CAPACITY=1 ATTEMPTS=100; MODE=cancel races cancellations of one booking)
+	$(COMPOSE) exec -T -e CAPACITY=$(CAPACITY) -e ATTEMPTS=$(ATTEMPTS) $(if $(MODE),-e MODE=$(MODE) )php php bin/concurrency-test
 
 stan: ## Static analysis
 	$(PHP) vendor/bin/phpstan analyse --memory-limit=1G

@@ -1,0 +1,108 @@
+meta {
+  name: 04 - Cinco cancelaciones simultaneas de la misma reserva
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{host}}/api/sessions/{{cancelSessionId}}
+  body: none
+  auth: none
+}
+
+script:pre-request {
+  // Montaje propio: una sesion nueva de aforo 5 en la experiencia de esta carpeta (a 12 dias, para
+  // no coincidir en el mismo dia con la del paso 02), llena con dos reservas: 3 plazas "de fondo" y
+  // las 2 de la reserva que se va a cancelar. Las 3 de fondo importan: sin ellas, una segunda
+  // liberacion dejaria booked_seats en negativo, el CHECK de la tabla la rechazaria con un 500 y la
+  // carrera se veria como un error de servidor en vez de como plazas fantasma que luego se venden.
+  const host = bru.getEnvVar("host");
+  const experienceId = bru.getVar("concurrencyExperienceId");
+  const startsAt = new Date(Date.now() + 12 * 24 * 60 * 60 * 1000).toISOString();
+
+  const session = await axios.post(host + "/api/experiences/" + experienceId + "/sessions", {
+    startsAt,
+    capacity: 5,
+    price: { amount: 1500, currency: "EUR" },
+  });
+  const sessionId = session.data.id;
+  bru.setVar("cancelSessionId", sessionId);
+
+  const bookingsUrl = host + "/api/sessions/" + sessionId + "/bookings";
+  await axios.post(bookingsUrl, { userId: "0199a1b2-c3d4-7000-8000-000000000301", seats: 3 });
+  const target = await axios.post(bookingsUrl, { userId: "0199a1b2-c3d4-7000-8000-000000000302", seats: 2 });
+  const url = host + "/api/bookings/" + target.data.reference + "/cancellation";
+
+  // Como en el paso 03: las 5 peticiones se CREAN todas antes de esperar ninguna con Promise.all;
+  // un `await` dentro del bucle las serializaria y no probaria nada.
+  const promises = [];
+  for (let i = 0; i < 5; i++) {
+    promises.push(
+      axios
+        .post(url)
+        .then((res) => ({ status: res.status, body: res.data }))
+        .catch((err) => ({
+          status: err.response ? err.response.status : 0,
+          body: err.response ? err.response.data : null,
+        }))
+    );
+  }
+
+  const results = await Promise.all(promises);
+
+  let count200 = 0;
+  let count422 = 0;
+  let count503 = 0;
+  let countOther = 0;
+  for (const r of results) {
+    if (r.status === 200) {
+      count200++;
+    } else if (r.status === 422 && r.body && r.body.type === "/problems/booking-already-cancelled") {
+      count422++;
+    } else if (r.status === 503 && r.body && r.body.type === "/problems/lock-timeout") {
+      count503++;
+    } else {
+      countOther++;
+    }
+  }
+
+  console.log(
+    "Cancelaciones simultaneas (5 de la misma reserva de 2 plazas): " +
+      count200 + "x200  " +
+      count422 + "x422 booking-already-cancelled  " +
+      count503 + "x503 lock-timeout  " +
+      countOther + "x otros (inesperado si es mayor que 0)"
+  );
+
+  bru.setVar("cancelBurst200", count200);
+  bru.setVar("cancelBurst422", count422);
+  bru.setVar("cancelBurst503", count503);
+  bru.setVar("cancelBurstOther", countOther);
+  bru.setVar("cancelBurstTotal", count200 + count422 + count503 + countOther);
+}
+
+assert {
+  res.status: eq 200
+  bru.getVar("cancelBurstTotal"): eq 5
+  bru.getVar("cancelBurstOther"): eq 0
+  bru.getVar("cancelBurst200"): eq 1
+  bru.getVar("cancelBurst422") + bru.getVar("cancelBurst503"): eq 4
+  res.body.bookedSeats: eq 3
+  res.body.availableSeats: eq 2
+}
+
+docs {
+  Lanza 5 cancelaciones de la MISMA reserva (2 plazas) a la vez, sobre una sesion de aforo 5 llena
+  (3 + 2 plazas). Esperado: exactamente un `200`; las otras 4 repartidas entre
+  `422 booking-already-cancelled` y `503 lock-timeout`. Y lo que de verdad importa: la sesion queda
+  con `bookedSeats = 3` y `availableSeats = 2`, es decir, las 2 plazas se liberan UNA sola vez.
+
+  Antes de la correccion, las cancelaciones leian la reserva sin bloqueo y solo bloqueaban la
+  sesion: varias veian la reserva todavia `confirmed`, y cada una volvia a restar sus plazas del
+  contador (dos `200`, `bookedSeats = 1`). Esas plazas fantasma se vendian despues, por encima del
+  aforo. Ahora la cancelacion bloquea primero la fila de la reserva, releida bajo ese bloqueo, y
+  despues la de la sesion (`README.md`, seccion 5).
+
+  Version pesada, con 60 cancelaciones y la comprobacion de que la sesion no se puede llenar por
+  encima del aforo despues: `make test-concurrency MODE=cancel`.
+}

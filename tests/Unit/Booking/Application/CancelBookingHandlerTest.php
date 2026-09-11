@@ -65,6 +65,9 @@ final class CancelBookingHandlerTest extends TestCase
         self::assertNotNull($response->cancelledAt);
         self::assertSame(5, $this->sessions->find(\App\Session\Domain\SessionId::fromString($this->sessionId))?->availableSeats());
         self::assertSame(2, $this->sessions->lockedReads); // one from booking, one from cancelling
+        // The booking row is locked too, and re-read under that lock: a booking read without it can
+        // already be cancelled by a concurrent request, and cancelling it again releases its seats twice.
+        self::assertSame(1, $this->bookings->lockedReads);
         self::assertCount(1, $this->events->publishedOf(BookingCancelled::class));
         // Nothing in the lock-count assertion above would catch a save() hoisted out of the
         // transaction; these pin that both saves happened while it was open.

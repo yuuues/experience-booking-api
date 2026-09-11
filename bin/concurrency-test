@@ -4,9 +4,13 @@
 declare(strict_types=1);
 
 /*
- * Fires N concurrent single-seat bookings at one session with capacity M (N > M)
- * and verifies that exactly M succeed and the session ends with 0 available seats.
- * Run against the dockerised API: `make test-concurrency`.
+ * Run against the dockerised API: `make test-concurrency`. Two modes:
+ *
+ * - MODE=book (default): fires N concurrent single-seat bookings at one session with capacity M
+ *   (N > M) and verifies that exactly M succeed and the session ends with 0 available seats.
+ * - MODE=cancel (`make test-concurrency MODE=cancel`): fills a session of capacity M with two
+ *   bookings, fires N concurrent cancellations of one of them and verifies that exactly one
+ *   succeeds, its seats are released once, and the session cannot then be sold past capacity.
  */
 
 require dirname(__DIR__) . '/vendor/autoload.php';
@@ -14,6 +18,8 @@ require dirname(__DIR__) . '/vendor/autoload.php';
 use Symfony\Component\HttpClient\Exception\TimeoutException;
 use Symfony\Component\HttpClient\HttpClient;
 use Symfony\Component\Uid\Uuid;
+use Symfony\Contracts\HttpClient\Exception\DecodingExceptionInterface;
+use Symfony\Contracts\HttpClient\ResponseInterface;
 
 /**
  * The probe measures whether PostgreSQL serialises concurrent bookings. A run that never got
@@ -54,9 +60,170 @@ function expectInt(array $data, string $key): int
     return $value;
 }
 
+/** The RFC 7807 `type` of an error response, for telling a legitimate 422/503 from any other one. */
+function problemType(ResponseInterface $response): string
+{
+    try {
+        $type = $response->toArray(false)['type'] ?? null;
+    } catch (DecodingExceptionInterface) {
+        return 'non-JSON body';
+    }
+
+    return is_string($type) ? $type : 'no problem type';
+}
+
+/**
+ * MODE=cancel. Concurrent cancellations of one booking must release its seats exactly once: a
+ * cancellation that decides on a booking read before its lock releases them again, and the phantom
+ * seats are then sold past capacity (README §5).
+ */
+function cancelProbe(string $baseUrl, int $capacity, int $attempts): never
+{
+    $cancelledSeats = 2;
+    if ($capacity <= $cancelledSeats || $attempts < 2) {
+        fwrite(\STDERR, sprintf(
+            "MODE=cancel needs CAPACITY > %d (another booking must hold the remaining seats) and ATTEMPTS >= 2 (one cancellation races nothing); got CAPACITY=%d, ATTEMPTS=%d.\n",
+            $cancelledSeats,
+            $capacity,
+            $attempts,
+        ));
+        exit(1);
+    }
+
+    // Same reason as in MODE=book: without raising maxHostConnections, curl would queue the
+    // cancellations six at a time in the client instead of at the row lock.
+    $http = HttpClient::create(['base_uri' => $baseUrl, 'timeout' => 30], $attempts);
+
+    $experienceId = expectString($http->request('POST', '/api/experiences', ['json' => [
+        'title' => 'Cancellation probe ' . date('H:i:s'),
+        'description' => 'Simultaneous cancellations of one booking.',
+        'providerId' => Uuid::v7()->toRfc4122(),
+    ]])->toArray(), 'id');
+
+    $sessionId = expectString($http->request('POST', sprintf('/api/experiences/%s/sessions', $experienceId), ['json' => [
+        'startsAt' => (new DateTimeImmutable('+3 days'))->format(\DATE_ATOM),
+        'capacity' => $capacity,
+        'price' => ['amount' => 1000, 'currency' => 'EUR'],
+    ]])->toArray(), 'id');
+
+    $book = static fn(int $seats): ResponseInterface => $http->request('POST', sprintf('/api/sessions/%s/bookings', $sessionId), ['json' => [
+        'userId' => Uuid::v7()->toRfc4122(),
+        'seats' => $seats,
+    ]]);
+
+    // Another booking holds every seat but the ones about to be cancelled. Without it, a second
+    // release would drive booked_seats below zero, chk_sessions_booked_seats would reject it, and
+    // the race would surface as a 500 instead of as the phantom seats this mode exists to catch.
+    $book($capacity - $cancelledSeats)->toArray();
+    $reference = expectString($book($cancelledSeats)->toArray(), 'reference');
+
+    printf(
+        "Session %s with capacity %d, full (%d + %d seats) — firing %d cancellations of %s (up to %d in flight)…\n",
+        $sessionId,
+        $capacity,
+        $capacity - $cancelledSeats,
+        $cancelledSeats,
+        $attempts,
+        $reference,
+        $attempts,
+    );
+
+    $responses = [];
+    for ($i = 0; $i < $attempts; ++$i) {
+        // Registered, not awaited: all of them are resolved concurrently in the stream() loop below.
+        $responses[] = $http->request('POST', sprintf('/api/bookings/%s/cancellation', $reference));
+    }
+
+    $outcomes = [];
+    try {
+        foreach ($http->stream($responses) as $response => $chunk) {
+            if ($chunk->isFirst()) {
+                // Marks the response as checked, so a 4xx/5xx does not throw at the end of the stream.
+                $response->getStatusCode();
+            }
+        }
+        foreach ($responses as $response) {
+            $code = $response->getStatusCode();
+            // Never a bare '200': PHP would turn that numeric-string key into the int 200.
+            $outcome = 200 === $code ? 'HTTP 200' : sprintf('HTTP %d %s', $code, problemType($response));
+            $outcomes[$outcome] = ($outcomes[$outcome] ?? 0) + 1;
+        }
+
+        $afterCancel = $http->request('GET', sprintf('/api/sessions/%s', $sessionId))->toArray();
+
+        // Sell the released seats back one at a time until the API refuses. Correct: exactly
+        // $cancelledSeats. More means the counter under-reports what is really sold.
+        $rebooked = 0;
+        $refusal = 'none';
+        for ($i = 0; $i <= $capacity; ++$i) {
+            $response = $book(1);
+            if (201 !== $response->getStatusCode()) {
+                $refusal = sprintf('%d %s', $response->getStatusCode(), problemType($response));
+                break;
+            }
+            ++$rebooked;
+        }
+
+        $final = $http->request('GET', sprintf('/api/sessions/%s', $sessionId))->toArray();
+    } catch (TimeoutException $e) {
+        inconclusive(sprintf(
+            "requests timed out before the API answered them (%s).\nLower ATTEMPTS or raise pm.max_children in docker/php/php-fpm.d/.",
+            $e->getMessage(),
+        ));
+    }
+    ksort($outcomes);
+
+    $bookedAfterCancel = expectInt($afterCancel, 'bookedSeats');
+    $finalBooked = expectInt($final, 'bookedSeats');
+    // Every confirmed seat is known: the other booking, plus what the refill got back.
+    $confirmedSeats = $capacity - $cancelledSeats + $rebooked;
+    $cancelled = $outcomes['HTTP 200'] ?? 0;
+    $unexpected = array_diff_key($outcomes, ['HTTP 200' => null, 'HTTP 422 /problems/booking-already-cancelled' => null, 'HTTP 503 /problems/lock-timeout' => null]);
+
+    foreach ($outcomes as $outcome => $count) {
+        printf("  %s: %d\n", $outcome, $count);
+    }
+    printf("Booked seats after the cancellations: %d / %d (expected %d: the %d cancelled seats released once)\n", $bookedAfterCancel, $capacity, $capacity - $cancelledSeats, $cancelledSeats);
+    printf("Refill: %d single-seat booking(s) accepted, then %s\n", $rebooked, $refusal);
+    printf("Confirmed seats: %d / %d (booked seats: %d)\n", $confirmedSeats, $capacity, $finalBooked);
+
+    if ($cancelled > 1 || $bookedAfterCancel !== $capacity - $cancelledSeats || $confirmedSeats > $capacity || $finalBooked !== $confirmedSeats) {
+        echo "FAIL — the booking was cancelled more than once or its seats were released more than once: the session was sold past capacity or lost count.\n";
+        exit(1);
+    }
+
+    if ([] !== $unexpected) {
+        printf("FAIL — unexpected responses: %s.\n", implode(', ', array_keys($unexpected)));
+        exit(1);
+    }
+
+    if (1 !== $cancelled || array_sum($outcomes) !== $attempts) {
+        echo "FAIL — no cancellation succeeded, or some attempts went unanswered.\n";
+        exit(1);
+    }
+
+    if ($rebooked !== $cancelledSeats || '422 /problems/not-enough-seats-available' !== $refusal) {
+        printf("FAIL — the released seats could not be booked back (%d of %d, then %s).\n", $rebooked, $cancelledSeats, $refusal);
+        exit(1);
+    }
+
+    echo "OK — cancelled exactly once, seats released once, no overbooking.\n";
+    exit(0);
+}
+
 $baseUrl = getenv('API_BASE_URL') ?: 'http://nginx';
 $capacity = (int) (getenv('CAPACITY') ?: 10);
 $attempts = (int) (getenv('ATTEMPTS') ?: 60);
+$mode = getenv('MODE') ?: 'book';
+
+if ('cancel' === $mode) {
+    cancelProbe($baseUrl, $capacity, $attempts);
+}
+
+if ('book' !== $mode) {
+    fwrite(\STDERR, sprintf("MODE must be \"book\" (default) or \"cancel\", got \"%s\".\n", $mode));
+    exit(1);
+}
 
 if ($attempts <= $capacity) {
     fwrite(\STDERR, sprintf(

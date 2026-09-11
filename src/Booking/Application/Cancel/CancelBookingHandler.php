@@ -29,7 +29,10 @@ final readonly class CancelBookingHandler
         $reference = BookingReference::fromString($command->reference);
 
         return $this->transaction->run(function () use ($reference): BookingResponse {
-            $booking = $this->bookings->findByReference($reference) ?? throw BookingNotFound::withReference($reference);
+            // Lock order: the booking row, then its session. The booking must be the one read under
+            // its own lock: a copy read earlier can already be cancelled by a concurrent request, and
+            // cancelling it again would release its seats a second time (README §5).
+            $booking = $this->bookings->findByReferenceForUpdate($reference) ?? throw BookingNotFound::withReference($reference);
             $session = $this->sessions->findForUpdate($booking->sessionId()) ?? throw SessionNotFound::withId($booking->sessionId());
 
             $session->cancelBooking($booking, $this->clock);

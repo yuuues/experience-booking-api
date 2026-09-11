@@ -50,9 +50,15 @@ los `*Response` y los `*Request`: son datos, no servicios.
   (`ExperienceEditability`) y deja que el agregado lance.
 - **Los handlers devuelven DTOs, nunca agregados.**
 - **Reservar y cancelar ocurren dentro de un único `TransactionalRunner::run()`,
-  y lo primero dentro es `SessionRepository::findForUpdate()`.** Sacar una
-  escritura de esa transacción reintroduce la sobreventa en silencio, sin que
-  ningún test unitario lo note. Ver §5 del README.
+  y lo primero dentro es bloquear la fila de lo que se va a modificar.** Reservar:
+  `SessionRepository::findForUpdate()`. Cancelar: `BookingRepository::findByReferenceForUpdate()`
+  y después `findForUpdate()` de su sesión. **Orden de bloqueo: reserva → sesión, nunca al
+  revés** (reservar solo bloquea la sesión e inserta una reserva nueva, así que no hay ciclo).
+  **Una entidad leída antes de su bloqueo nunca decide nada después**: otra transacción puede
+  haberla cambiado mientras se esperaba, y Doctrine no la refresca sola. Así se liberaban dos
+  veces las plazas de dos cancelaciones simultáneas (§5.1 del README). Sacar una escritura de
+  esa transacción reintroduce la sobreventa en silencio, sin que ningún test unitario lo note.
+  Ver §5 del README.
 - **Cero supresiones de PHPStan en línea.** Nada de `@phpstan-ignore` ni
   `@phpstan-var` ni baseline. Si PHPStan (nivel `max`) se queja, el diseño es lo
   que hay que cambiar. La única entrada de `ignoreErrors` es `method.unused` sobre
@@ -66,7 +72,8 @@ los `*Response` y los `*Request`: son datos, no servicios.
 
 - **Todo pasa por `make`; la aplicación solo corre en Docker.** `make up`,
   `make test`, `make test-unit`, `make stan`, `make cs`, `make cs-fix`,
-  `make test-concurrency`, `make console c="..."`, `make composer c="..."`.
+  `make test-concurrency` (y `MODE=cancel` para cancelaciones simultáneas),
+  `make console c="..."`, `make composer c="..."`.
   No hay `symfony serve` ni PHP en el host.
 - **TDD rojo-verde.** Test que falla, implementación mínima, refactor. Una
   funcionalidad no está hecha hasta que hay un test que la ejercita como lo haría

@@ -77,7 +77,8 @@ con las mismas peticiones encadenadas y sus casos de error, lista para abrir y e
 de un tirón con `npx @usebruno/cli run --env local` dentro de `bruno/`). La carpeta
 [`bruno/concurrencia/`](bruno/concurrencia/) lanza diez reservas a la vez contra una sesión de
 aforo 5 desde un único script con `Promise.all`, para ver la sobreventa (o su ausencia) con un
-clic.
+clic, y después cinco cancelaciones simultáneas de la misma reserva, para ver que sus plazas se
+liberan una sola vez.
 
 **Crear una experiencia**
 
@@ -301,7 +302,7 @@ agregados y value objects.
 |---|---|---|---|
 | `ExperienceRepository` | `Experience/Domain` | `DoctrineExperienceRepository` | `InMemoryExperienceRepository` |
 | `SessionRepository` (con `findForUpdate`) | `Session/Domain` | `DoctrineSessionRepository` | `InMemorySessionRepository` |
-| `BookingRepository` (con `findByReference`, `existsConfirmedForExperience`) | `Booking/Domain` | `DoctrineBookingRepository` | `InMemoryBookingRepository` |
+| `BookingRepository` (con `findByReference`, `findByReferenceForUpdate`, `existsConfirmedForExperience`) | `Booking/Domain` | `DoctrineBookingRepository` | `InMemoryBookingRepository` |
 | `BookingReferenceGenerator` | `Booking/Domain` | `RandomBookingReferenceGenerator` | `Sequential…` / `AlwaysSame…` |
 | `UserContactProvider` | `Booking/Domain` | `FakeUserContactProvider` (simulado) | el mismo |
 | `MailerPort` | `Booking/Domain` | `SymfonyMailerAdapter` | `InMemoryMailer` |
@@ -340,8 +341,9 @@ worker: php bin/console messenger:consume async
 
 La generación de la referencia se hace **antes** de abrir la transacción a propósito: la
 comprobación de unicidad es una lectura que no necesita correr con el bloqueo de fila cogido, y
-el índice único de `bookings.reference` es la red de seguridad final. Cancelar es simétrico:
-`findByReference` → `findForUpdate` de su sesión → `Session::cancelBooking` → `BookingCancelled`.
+el índice único de `bookings.reference` es la red de seguridad final. Cancelar bloquea dos filas,
+en este orden: `findByReferenceForUpdate` (la reserva, releída bajo su propio bloqueo) →
+`findForUpdate` de su sesión → `Session::cancelBooking` → `BookingCancelled` (§5.1).
 
 ---
 
@@ -391,6 +393,29 @@ Para no acumular peticiones sobre una fila muy caliente, el runner ejecuta
 `SET LOCAL lock_timeout = '2000ms'`. Si la espera se agota, PostgreSQL devuelve `55P03`
 (`lock_not_available`) y el listener lo traduce a `503` con `Retry-After: 1`: mejor decirle al
 cliente que reintente que dejarle la conexión colgada.
+
+**Cancelar bloquea la reserva antes que la sesión.** `CancelBookingHandler` abre la misma
+transacción y lo primero que hace es `BookingRepository::findByReferenceForUpdate()`:
+`SELECT … FOR UPDATE` sobre la fila de la reserva, que devuelve su estado tal como está cuando se
+concede el bloqueo, aunque la unidad de trabajo ya tuviera una copia anterior. Después bloquea la
+sesión con `findForUpdate()`. El orden es siempre reserva → sesión, y reservar solo bloquea la sesión
+e inserta una reserva nueva: ningún camino adquiere los dos bloqueos en orden inverso, así que no
+hay ciclo de interbloqueo posible.
+
+Esto se corrigió **después de la entrega**. La versión entregada leía la reserva sin bloqueo y solo
+bloqueaba la sesión. Con dos cancelaciones simultáneas de la misma reserva, las dos la leían
+`confirmed` antes de que la primera hiciera commit; la segunda esperaba el bloqueo de la sesión, la
+recibía ya actualizada y volvía a restar las plazas con su copia vieja de la reserva. El contador
+quedaba por debajo de lo vendido y la API vendía después ese hueco: 13 plazas confirmadas en una
+sesión de aforo 10. El `CHECK` de §5.2 solo lo frenaba cuando la resta dejaba el contador en
+negativo, y entonces con un `500`. La sonda no lo vio porque solo lanzaba reservas concurrentes;
+ahora tiene un modo que lanza cancelaciones (`make test-concurrency MODE=cancel`, §5.4), y
+`DoctrineBookingRepositoryTest` fija el mecanismo de forma determinista.
+
+La regla que queda: una entidad leída antes de su bloqueo no decide nada después. Refrescarla no es
+una salida con Doctrine ORM 3.7, que se niega a reescribir propiedades `readonly` ya inicializadas
+(`LogicException`) —y los agregados guardan ahí sus value objects—; por eso el repositorio descarta
+la copia gestionada y relee la fila bajo el bloqueo.
 
 ### 5.2 Lo que el `CHECK` **no** hace
 
@@ -449,6 +474,29 @@ OK — no overbooking.
 ```
 
 Exactamente una reserva gana; las otras 99 reciben un 422 correcto, no un error de servidor.
+
+El modo de cancelación (`MODE=cancel`) llena una sesión de aforo *M* con dos reservas (*M* − 2
+plazas y 2 plazas), lanza *N* cancelaciones simultáneas de la de 2 plazas y comprueba que
+exactamente una devuelve `200`, que las plazas se liberan una sola vez y que después solo se pueden
+volver a vender esas 2. La reserva de fondo es a propósito: sin ella, una segunda liberación dejaría
+el contador en negativo, el `CHECK` la rechazaría con un `500` y la carrera se vería como un error de
+servidor en vez de como plazas fantasma.
+
+```console
+$ make test-concurrency MODE=cancel
+docker compose exec -T -e CAPACITY=10 -e ATTEMPTS=60 -e MODE=cancel php php bin/concurrency-test
+Session 01a08ee1-ce1d-7307-9df7-d324888dc9e5 with capacity 10, full (8 + 2 seats) — firing 60 cancellations of BK-42ERRQPM (up to 60 in flight)…
+  HTTP 200: 1
+  HTTP 422 /problems/booking-already-cancelled: 59
+Booked seats after the cancellations: 8 / 10 (expected 8: the 2 cancelled seats released once)
+Refill: 2 single-seat booking(s) accepted, then 422 /problems/not-enough-seats-available
+Confirmed seats: 10 / 10 (booked seats: 10)
+OK — cancelled exactly once, seats released once, no overbooking.
+```
+
+Contra el código anterior a la corrección, la misma ejecución dio cinco `200`, 13 `500` del `CHECK`,
+`bookedSeats` a 0 en vez de 8 y **18 plazas confirmadas en una sesión de aforo 10**: es el control
+negativo de este modo.
 
 ### 5.5 Control negativo: la sonda mide algo
 
@@ -674,20 +722,20 @@ al cliente.
 ## 9. Calidad
 
 ```bash
-make test              # 145 tests
+make test              # 147 tests
 make stan              # PHPStan nivel max
 make cs                # PHP-CS-Fixer, @Symfony + @PER-CS2.0
-make test-concurrency  # sonda de concurrencia contra la API real
+make test-concurrency  # sonda de concurrencia contra la API real (MODE=cancel: cancelaciones)
 ```
 
-**Tests: 145, 1599 aserciones.**
+**Tests: 147, 1606 aserciones.**
 
 | Suite | Tests | Qué cubre |
 |---|---|---|
 | `tests/Unit` | 97 | Reglas de negocio sobre agregados y value objects; handlers con repositorios in-memory, `FixedClock` e `InMemoryMailer`. Sin base de datos, milisegundos |
-| `tests/Integration` | 16 | Repositorios Doctrine contra PostgreSQL real: round-trip de value objects, `findForUpdate`, el índice único traducido a excepción de dominio, la idempotencia del registro DBAL y la atomicidad del outbox |
+| `tests/Integration` | 18 | Repositorios Doctrine contra PostgreSQL real: round-trip de value objects, `findForUpdate`, que `findByReferenceForUpdate` devuelve la fila confirmada aunque la unidad de trabajo tenga una copia vieja, el índice único traducido a excepción de dominio, la idempotencia del registro DBAL y la atomicidad del outbox |
 | `tests/Functional` | 32 | `WebTestCase` sobre los 8 endpoints de negocio (éxitos, cada código de error, formato `problem+json`, cabecera `Location`, correos generados) más la documentación OpenAPI, comprobada contra el router real para que un endpoint nuevo sin documentar rompa la suite |
-| `bin/concurrency-test` | — | Sonda fuera de PHPUnit: procesos concurrentes reales contra la API dockerizada (`make test-concurrency`) |
+| `bin/concurrency-test` | — | Sonda fuera de PHPUnit: procesos concurrentes reales contra la API dockerizada — reservas (`make test-concurrency`) y cancelaciones de una misma reserva (`MODE=cancel`) |
 
 La sonda de concurrencia está deliberadamente fuera de PHPUnit: lo que se quiere demostrar es
 que **PostgreSQL** serializa peticiones HTTP simultáneas, y eso no se puede probar dentro de una

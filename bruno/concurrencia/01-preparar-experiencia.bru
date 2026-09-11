@@ -1,0 +1,36 @@
+meta {
+  name: 01 - Preparar experiencia (concurrencia)
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{host}}/api/experiences
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "title": "Kayak nocturno (lote de concurrencia)",
+    "description": "Experiencia propia de esta carpeta, para no depender del resto de la coleccion.",
+    "providerId": "0199a1b2-c3d4-7000-8000-000000000009"
+  }
+}
+
+vars:post-response {
+  concurrencyExperienceId: res.body.id
+}
+
+assert {
+  res.status: eq 201
+}
+
+docs {
+  Carpeta autocontenida: crea su propia experiencia para poder ejecutarse sola, sin depender de
+  los pasos 01-23 del resto de la coleccion. Esperado: `201 Created`.
+}

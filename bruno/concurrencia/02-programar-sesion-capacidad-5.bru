@@ -1,0 +1,48 @@
+meta {
+  name: 02 - Programar sesion con capacidad 5
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{host}}/api/experiences/{{concurrencyExperienceId}}/sessions
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+script:pre-request {
+  // Cualquier instante futuro con zona explicita vale (ver README, seccion 2): la API acepta
+  // el toISOString() de JavaScript tal cual, sin conversiones.
+  const startsAt = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000);
+  bru.setVar("concurrencyStartsAt", startsAt.toISOString());
+}
+
+body:json {
+  {
+    "startsAt": "{{concurrencyStartsAt}}",
+    "capacity": 5,
+    "price": {
+      "amount": 1500,
+      "currency": "EUR"
+    }
+  }
+}
+
+vars:post-response {
+  concurrencySessionId: res.body.id
+}
+
+assert {
+  res.status: eq 201
+  res.body.capacity: eq 5
+  res.body.availableSeats: eq 5
+}
+
+docs {
+  Aforo deliberadamente pequeno (5 plazas): con solo 10 peticiones simultaneas alcanza para
+  agotarlo y comprobar que nadie se cuela. Esperado: `201 Created`.
+}

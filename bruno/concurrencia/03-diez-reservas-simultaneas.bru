@@ -1,0 +1,110 @@
+meta {
+  name: 03 - Diez reservas simultaneas sobre 5 plazas
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{host}}/api/sessions/{{concurrencySessionId}}
+  body: none
+  auth: none
+}
+
+script:pre-request {
+  // El runner de Bruno es secuencial (una peticion detras de otra), asi que la concurrencia
+  // real solo se puede lanzar desde dentro de un script, con `axios` (viene incluido en el
+  // sandbox de Bruno; comprobado contra la CLI 4.1.0 en modo "safe", que es el que usa por
+  // defecto `bru run`: expone `globalThis.axios` con los verbos http de siempre).
+  //
+  // Clave para que esto demuestre algo: las 10 peticiones se CREAN (se llama a axios.post,
+  // que ya deja la peticion en marcha) todas ANTES de esperar ninguna con Promise.all. Si se
+  // hiciera `await` dentro del propio bucle, cada reserva esperaria a que terminase la
+  // anterior y se serializarian, dejando de probar nada sobre concurrencia real. Es el mismo
+  // tipo de trampa silenciosa que documenta `bin/concurrency-test`: ahi el limite por defecto
+  // de conexiones simultaneas del HttpClient de Symfony (`maxHostConnections`, 6) capaba en
+  // silencio cuantas peticiones iban de verdad en paralelo, encolando el resto en el cliente en
+  // vez de en el bloqueo de fila — visto ahora, no habria hecho falta esperar a produccion para
+  // notarlo. Esa es la version mas pesada, pensada para 60-100 peticiones; esta de aqui es la
+  // demostracion de un clic, no una prueba de carga — el sandbox de Bruno no es sitio para
+  // cientos de conexiones.
+  const sessionId = bru.getVar("concurrencySessionId");
+  const url = bru.getEnvVar("host") + "/api/sessions/" + sessionId + "/bookings";
+
+  const promises = [];
+  for (let i = 0; i < 10; i++) {
+    const userId = "0199a1b2-c3d4-7000-8000-0000000001" + String(i).padStart(2, "0");
+    promises.push(
+      axios
+        .post(url, { userId, seats: 1 })
+        .then((res) => ({ status: res.status, body: res.data }))
+        .catch((err) => ({
+          status: err.response ? err.response.status : 0,
+          body: err.response ? err.response.data : null,
+        }))
+    );
+  }
+
+  const results = await Promise.all(promises);
+
+  let count201 = 0;
+  let count422 = 0;
+  let count503 = 0;
+  let countOther = 0;
+  for (const r of results) {
+    if (r.status === 201) {
+      count201++;
+    } else if (r.status === 422 && r.body && r.body.type === "/problems/not-enough-seats-available") {
+      count422++;
+    } else if (r.status === 503 && r.body && r.body.type === "/problems/lock-timeout") {
+      count503++;
+    } else {
+      countOther++;
+    }
+  }
+
+  console.log(
+    "Concurrencia (10 peticiones, aforo 5): " +
+      count201 + "x201  " +
+      count422 + "x422 not-enough-seats-available  " +
+      count503 + "x503 lock-timeout  " +
+      countOther + "x otros (inesperado si es mayor que 0)"
+  );
+
+  bru.setVar("burstCount201", count201);
+  bru.setVar("burstCount422", count422);
+  bru.setVar("burstCount503", count503);
+  bru.setVar("burstCountOther", countOther);
+  bru.setVar("burstTotal", count201 + count422 + count503 + countOther);
+}
+
+assert {
+  res.status: eq 200
+  bru.getVar("burstTotal"): eq 10
+  bru.getVar("burstCountOther"): eq 0
+  bru.getVar("burstCount201"): eq 5
+  bru.getVar("burstCount422") + bru.getVar("burstCount503"): eq 5
+  res.body.bookedSeats: eq 5
+  res.body.availableSeats: eq 0
+}
+
+docs {
+  Lanza 10 reservas de 1 plaza cada una (con `userId` distinto) contra una sesion de aforo 5,
+  todas a la vez, y cuenta cuantas caen en cada codigo. Esperado: exactamente 5 `201`, y las
+  otras 5 repartidas entre `422 not-enough-seats-available` (rechazadas por el agregado, dentro
+  de la transaccion) y `503 lock-timeout` (si el `lock_timeout` de 2 s salta bajo contencion,
+  algo legitimo, no un fallo: el listener lo traduce con `Retry-After`). Cualquier otro
+  resultado — mas de 5 `201`, o un codigo que no sea 201/422/503 — hace fallar la aserción; no
+  se "traga" como inconcluyente.
+
+  Por que no basta con mirar el contador de plazas: una actualizacion perdida (dos peticiones
+  leen `booked_seats = 3`, las dos calculan `4` y escriben `4`) deja `bookedSeats` con un
+  numero que parece razonable — nunca por encima del aforo, solo por debajo de lo que
+  deberia — asi que un `bookedSeats` correcto NO demuestra que no hubo sobreventa. Lo que sí la
+  detecta es contar los `201`: si el bloqueo pesimista (`SELECT … FOR UPDATE`,
+  `README.md` seccion 5) falla, dos peticiones que deberian competir por la misma plaza reciben
+  ambas un `201`, y entonces `burstCount201` pasa de 5 y esta aserción lo señala.
+
+  Esta prueba es la demostracion de un clic, no el test de concurrencia real: para eso esta
+  `bin/concurrency-test` (`make test-concurrency`), pensado para 60-100 peticiones. Lanzar esa
+  cantidad desde el sandbox de un script de Bruno no tendria sentido.
+}

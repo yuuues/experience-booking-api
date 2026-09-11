@@ -33,6 +33,9 @@ final readonly class ProblemJsonExceptionListener
     /** PostgreSQL `lock_not_available`: what `SET LOCAL lock_timeout` raises on a contended row. */
     private const string LOCK_NOT_AVAILABLE = '55P03';
 
+    /** Nelmio's own routes: documentation, not API responses, so they keep Symfony's default error rendering. */
+    private const array EXCLUDED_PATHS = ['/api/doc', '/api/doc.json'];
+
     public function __construct(
         #[Autowire(param: 'kernel.debug')]
         private bool $debug,
@@ -42,6 +45,10 @@ final readonly class ProblemJsonExceptionListener
     {
         $path = $event->getRequest()->getPathInfo();
         if ('/api' !== $path && !str_starts_with($path, '/api/')) {
+            return;
+        }
+
+        if (\in_array($path, self::EXCLUDED_PATHS, true)) {
             return;
         }
 

@@ -1,0 +1,13 @@
+nelmio_api_doc:
+    documentation:
+        info:
+            title: API de reservas de experiencias
+            description: >-
+                API REST para una plataforma de experiencias: un proveedor publica experiencias con
+                sesiones (fecha, aforo, precio) y los usuarios reservan plazas, sin sobreventa cuando
+                muchos reservan la misma sesión a la vez. Todos los errores se devuelven como
+                `application/problem+json` (RFC 7807).
+            version: 1.0.0
+    areas: # to filter documented areas
+        path_patterns:
+            - ^/api(?!/doc(\.json)?$) # Rutas bajo /api, salvo la propia documentación

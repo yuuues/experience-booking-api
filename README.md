@@ -56,9 +56,15 @@ Prefijo `/api`. JSON de entrada y salida. Los ids son UUID v7 generados en el se
 | `GET` | `/api/bookings/{reference}` | — | `200` |
 | `POST` | `/api/bookings/{reference}/cancellation` | — | `200`, reserva con `status: cancelled` |
 
-Ocho rutas, las mismas que lista `make console c="debug:router"`. `startsAt` acepta cualquier
-instante ISO 8601 con zona explícita (`Z` o un offset numérico como `+02:00`), con o sin segundos
-fraccionarios; una hora local sin zona se rechaza por ambigua.
+Ocho rutas `api_*` (más `/api/doc` y `/api/doc.json`, la documentación interactiva; en total diez
+si se cuentan con `make console c="debug:router"`). `startsAt` acepta cualquier instante ISO 8601
+con zona explícita (`Z` o un offset numérico como `+02:00`), con o sin segundos fraccionarios; una
+hora local sin zona se rechaza por ambigua.
+
+Documentación interactiva (Swagger UI) en [`/api/doc`](http://localhost:8080/api/doc), spec en
+crudo en [`/api/doc.json`](http://localhost:8080/api/doc.json): cada endpoint con su cuerpo de
+petición, todas las respuestas posibles (éxito y error, con su código y esquema) y ejemplos
+tomados del flujo de abajo.
 
 ### 2.1 Flujo completo
 
@@ -67,7 +73,10 @@ devuelve en una sola.
 
 Alternativa sin copiar/pegar: [`bruno/`](bruno/) es una colección de [Bruno](https://www.usebruno.com/)
 con las mismas peticiones encadenadas y sus casos de error, lista para abrir y ejecutar (o correr
-de un tirón con `npx @usebruno/cli run --env local` dentro de `bruno/`).
+de un tirón con `npx @usebruno/cli run --env local` dentro de `bruno/`). La carpeta
+[`bruno/concurrencia/`](bruno/concurrencia/) lanza diez reservas a la vez contra una sesión de
+aforo 5 desde un único script con `Promise.all`, para ver la sobreventa (o su ausencia) con un
+clic.
 
 **Crear una experiencia**
 

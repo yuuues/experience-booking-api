@@ -73,6 +73,8 @@ final class ProblemJsonExceptionListenerTest extends TestCase
         yield 'api resource' => ['/api/experiences', true];
         yield 'documentation next to the api' => ['/apidocs/foo', false];
         yield 'unrelated path' => ['/not-api', false];
+        yield 'swagger ui' => ['/api/doc', false];
+        yield 'openapi spec' => ['/api/doc.json', false];
     }
 
     #[Test]

@@ -1,108 +1,135 @@
 # AGENTS.md
 
-This is a Symfony project. Check `composer.json` for the exact Symfony/PHP version
-in use, and read `symfony.lock` to see which recipes ran. Don't assume Doctrine,
-Twig, API Platform, Messenger, or Lock are installed unless one of those says so.
+API REST de reservas de experiencias (prueba técnica). PHP 8.5, Symfony 8.1,
+PostgreSQL 18, Doctrine ORM 3 + Migrations, Messenger y Mailer. Arquitectura
+hexagonal con DDD.
 
-## Ask before generating
+El contexto largo está en el [`README.md`](README.md) (decisiones, concurrencia,
+calidad) y en [`docs/design/`](docs/design/) + [`docs/plans/`](docs/plans/). Este
+fichero es el resumen operativo: lo que hay que saber antes de tocar código.
 
-If the task doesn't specify, ask rather than guess:
+## Arquitectura
 
-- Persistence: Doctrine ORM, Doctrine ODM, or none?
-- Interface: server-rendered (Twig), API (Serializer, maybe API Platform), or both?
-- Auth: SecurityBundle, and which authenticator?
+Un bounded context, tres módulos (`Experience`, `Session`, `Booking`) y un kernel
+`Shared`. Cada módulo repite las mismas tres capas y la dependencia apunta siempre
+hacia dentro:
 
-If you can't ask (no interactive channel), state the assumption you're making and
-pick the smallest option (e.g. no persistence layer) rather than scaffolding a
-full stack nobody asked for.
+```
+src/<Módulo>/Domain          agregados, value objects, eventos, excepciones, puertos
+src/<Módulo>/Application     casos de uso: Command/Query + Handler + Response DTO
+src/<Módulo>/Infrastructure  controladores, DTOs de request, repositorios, adaptadores
+```
 
-## Adding features: Flex, not hand-wiring
+**`Domain` no importa framework.** Hay una única excepción documentada:
+`src/Shared/Domain/Uuid.php` usa `symfony/uid` para generar UUIDv7.
+`grep -rn "use Symfony" src/*/Domain/` debe devolver exactamente esa línea y
+ninguna más.
 
-Install new capabilities with `composer require <package>` (e.g. `symfony/lock`,
-`symfony/messenger`, `orm-pack`) and let the Flex recipe register the bundle and
-generate its config. Don't hand-edit `config/bundles.php` or hand-write a bundle's
-base config; that's what the recipe is for. Don't skip a good-fit component just
-because it isn't installed yet; installing it is one command.
+## Dónde va cada cosa
 
-## Conventions
+| Cosa | Sitio |
+|---|---|
+| Agregados y value objects | `src/<Módulo>/Domain/` |
+| Caso de uso | `src/<Módulo>/Application/<Accion>/`: `XCommand`/`XQuery` readonly + `XHandler` invocable + `XResponse` DTO |
+| Puertos (interfaces) | `Domain/` del módulo dueño del concepto; `TransactionalRunner` y `DomainEventPublisher` viven en `Shared/Application/` |
+| Adaptadores | `src/<Módulo>/Infrastructure/`, conectados con `#[AsAlias(id: Puerto::class)]` |
+| Mapping Doctrine | XML en `config/doctrine/<Módulo>/*.orm.xml`; los tipos custom se registran en `config/packages/doctrine.yaml` |
+| DTOs de request HTTP | `src/<Módulo>/Infrastructure/Http/*Request.php`, con `#[Assert\...]` |
+| Dobles de test | `tests/Doubles/<Módulo>/` (in-memory, no mocks) |
 
-Follow https://symfony.com/doc/current/best_practices.html to write idiomatic
-Symfony:
+`config/services.yaml` excluye del contenedor `Domain/`, los `*Command`/`*Query`,
+los `*Response` y los `*Request`: son datos, no servicios.
 
-- Use PHP attributes for framework metadata, and not only on controllers:
-  `#[Route]`, `#[MapRequestPayload]`, `#[IsGranted]` on actions, `#[Assert\...]`
-  on properties, `#[AsCommand]`, `#[AsEventListener]`, `#[AsMessageHandler]`, and
-  `#[AsAlias]` / `#[AsTaggedItem]` / `#[Autoconfigure]` on services. No YAML or
-  XML routing.
-- Rely on autowiring and autoconfiguration. Type-hint constructor arguments and
-  let the container resolve them. Where a type-hint can't express it, stay in the
-  class with `#[Autowire]` (parameters, env vars, expressions) or `#[Target]` (one
-  of several implementations of an interface). A YAML service definition is the
-  last resort, not the first.
-- Controllers extend `AbstractController`, stay thin, and delegate to services.
-- Use the framework for what it already does: Form for server-rendered forms,
-  Validator for validation, Serializer for JSON, Messenger for async work,
-  Security (voters, authenticators) for access control, Twig `path()`/`url()`
-  instead of hardcoded URLs.
-- Before hand-writing infrastructure (locks, queues, caches, HTTP clients,
-  mailers, schedulers) or reaching for a third-party library, check whether a
-  Symfony component covers it. It usually does.
+## Reglas que no se rompen
 
-Three specifics worth spelling out, because they are easy to get wrong:
+- **Cero atributos de ORM en `src/`.** El mapping es XML. Un `#[ORM\Entity]` en un
+  agregado es un error, no una simplificación.
+- **Ninguna regla de negocio fuera de un agregado.** Los handlers orquestan;
+  `Session::book()`, `Session::cancelBooking()`, `Experience::update()` deciden.
+  Si un handler necesita un dato de otro módulo, lo trae como value object
+  (`ExperienceEditability`) y deja que el agregado lance.
+- **Los handlers devuelven DTOs, nunca agregados.**
+- **Reservar y cancelar ocurren dentro de un único `TransactionalRunner::run()`,
+  y lo primero dentro es `SessionRepository::findForUpdate()`.** Sacar una
+  escritura de esa transacción reintroduce la sobreventa en silencio, sin que
+  ningún test unitario lo note. Ver §5 del README.
+- **Cero supresiones de PHPStan en línea.** Nada de `@phpstan-ignore` ni
+  `@phpstan-var` ni baseline. Si PHPStan (nivel `max`) se queja, el diseño es lo
+  que hay que cambiar. La única entrada de `ignoreErrors` es `method.unused` sobre
+  `src/Kernel.php`, del esqueleto de Symfony.
+- **Métodos de test en `snake_case`** (`php_unit_method_casing`), describiendo el
+  comportamiento: `it_refuses_to_overbook`, no `testBook`.
+- **Los eventos de dominio siempre tienen handler.** Si se añade uno sin consumidor
+  de negocio, `Shared/Infrastructure/Messenger/LogDomainEvent` ya lo recoge.
 
-- Bind request data with `#[MapRequestPayload]` / `#[MapQueryString]` on action
-  arguments, which wires up Serializer and Validator for you, instead of calling
-  `json_decode()` or `SerializerInterface` by hand. If neither package is
-  installed yet, `composer require` them rather than falling back to manual
-  parsing.
-- Use constructor property promotion, and `readonly` for DTOs and value objects.
-  Don't mark a service `readonly` if it might become `lazy: true`: a lazy proxy
-  can't extend a `readonly` class.
-- Use `symfony/lock` (`LockFactory`) for mutual exclusion. A hand-built flag or
-  lock file looks fine in review and is usually wrong under concurrency.
+## Cómo trabajar
 
-## Everyday workflow
+- **Todo pasa por `make`; la aplicación solo corre en Docker.** `make up`,
+  `make test`, `make test-unit`, `make stan`, `make cs`, `make cs-fix`,
+  `make test-concurrency`, `make console c="..."`, `make composer c="..."`.
+  No hay `symfony serve` ni PHP en el host.
+- **TDD rojo-verde.** Test que falla, implementación mínima, refactor. Una
+  funcionalidad no está hecha hasta que hay un test que la ejercita como lo haría
+  quien la llama: petición HTTP para un controlador, llamada al servicio para un
+  servicio.
+- **Migraciones escritas a mano** en `migrations/`, con nombres de índice y de
+  constraint explícitos. Nunca `doctrine:migrations:diff` ni
+  `doctrine:schema:update`: el esquema tiene a propósito más garantías que el
+  mapping (`CHECK`, FKs, índices únicos), y la herramienta las borraría. El README
+  §9.1 explica por qué `doctrine:schema:validate` reporta la base de datos "fuera
+  de sincronía" y por qué está bien así.
+- **Paquetes nuevos con `make composer c="require ..."`**, dejando que la receta de
+  Flex registre el bundle y su configuración. No editar `config/bundles.php` a mano.
 
-- Run the app with `symfony serve -d`, and commands with `symfony console ...`
-  (or `bin/console` when the Symfony CLI isn't available).
-- When something fails, read `var/log/dev.log` and the web profiler
-  (`/_profiler`) before changing code.
-- If `maker-bundle` is installed, prefer `bin/console make:*` with every argument
-  passed up front and `--no-interaction` where supported: makers prompt on a
-  terminal by default, which hangs a non-interactive shell. If a maker still
-  needs interactive input, hand-write the code instead.
-- If Doctrine ORM is installed, schema changes go through migrations
-  (`bin/console make:migration`, then `doctrine:migrations:migrate`), never
-  `doctrine:schema:update` or hand-written SQL.
-- `.env` is committed and holds defaults only. Real secrets belong in `.env.local`
-  (git-ignored) or the secrets vault (`bin/console secrets:set`), read via
-  `%env(...)%`.
+## Qué NO hacer
 
-## Testing
+- **No añadir autenticación ni autorización.** El enunciado la excluye
+  explícitamente; `providerId` y `userId` llegan en el body. Está documentado como
+  el hueco número 1 en §8 del README.
+- **No modelar usuarios ni proveedores.** Son ids de otro contexto. El email de
+  contacto se resuelve por el puerto `UserContactProvider`.
+- **No "arreglar" las decisiones deliberadas del README**: dos agregados en una
+  misma transacción (§7.1), el `PUT /api/experiences/{id}` añadido (§7.2), la sonda
+  de concurrencia fuera de PHPUnit (§9), la ventana de carrera de la referencia de
+  reserva (§8). Están razonadas por escrito; cambiarlas requiere cambiar también el
+  razonamiento.
+- **No introducir un ORM lock optimista, un `UPDATE` condicional ni una cola por
+  sesión** como sustituto del bloqueo de fila: las tres alternativas están
+  evaluadas y descartadas en §5.3.
 
-Install `symfony/test-pack` if it isn't already. Functional/HTTP tests extend
-`WebTestCase`; service-level tests extend `KernelTestCase`. Run
-`php bin/phpunit` (falls back to `vendor/bin/phpunit`). A feature isn't done
-until it has a test that exercises it the way a caller would, an HTTP request for
-a controller or a service call for a service, not just "it didn't throw."
+## Convenciones Symfony
 
-## Code style
+Se sigue https://symfony.com/doc/current/best_practices.html, con estas
+particularidades del proyecto:
 
-Symfony's coding standard, the `@Symfony` php-cs-fixer ruleset (a PSR-12-derived
-superset). Run `vendor/bin/php-cs-fixer fix` if `friendsofphp/php-cs-fixer` is
-installed; it isn't part of the skeleton by default.
+- Metadatos del framework con atributos PHP: `#[Route]`, `#[MapRequestPayload]`,
+  `#[AsEventListener]`, `#[AsMessageHandler]`, `#[AsAlias]`, `#[Autowire]`. Nada de
+  routing en YAML o XML (el XML aquí es solo mapping de Doctrine).
+- **Los controladores no extienden `AbstractController`**: son clases
+  `final readonly` invocables (`__invoke`) que reciben el handler por constructor y
+  devuelven `JsonResponse`. No tienen lógica; traducen HTTP a un Command y el
+  Response DTO a JSON.
+- El cuerpo de la petición se enlaza con `#[MapRequestPayload]` sobre un DTO con
+  restricciones del Validator. Nunca `json_decode()` a mano.
+- Promoción de propiedades en el constructor y `readonly` en DTOs, value objects,
+  handlers y adaptadores.
+- Autowiring y `#[AsAlias]` para conectar puerto y adaptador. No hay definiciones de
+  servicio escritas a mano.
+- Los errores salen como `application/problem+json` (RFC 7807) por
+  `ProblemJsonExceptionListener`; una excepción de dominio nueva hereda de
+  `NotFoundException` / `ConflictException` / `InvalidValue` / `DomainException` y ya
+  queda mapeada a 404 / 409 / 400 / 422.
+- Cada endpoint se documenta con atributos de Nelmio/OpenAPI. Hay un test funcional
+  que compara la spec con el router real: un endpoint sin documentar rompe la suite.
 
-## Discover, don't guess
+## Descubrir, no adivinar
 
-Framework APIs change between versions and your training data may be stale. Look
-things up in the project instead of relying on memory:
+Las APIs del framework cambian entre versiones. Comprobar en el proyecto antes de
+dar algo por hecho:
 
-- `bin/console about`: versions, environment, paths.
-- `bin/console debug:router`, `debug:container`, `debug:autowiring <name>`,
-  `debug:config <bundle>`, `config:dump-reference <bundle>`: what exists and how
-  it is configured.
-- `bin/console lint:container`, plus `lint:twig templates/` and
-  `lint:yaml config/` where those packages are installed: validate before running.
-- Read the installed source and docblocks under `vendor/`.
-- Docs: https://symfony.com/doc/current/ (switch to the version matching
-  `composer.json` if it differs).
+- `make console c="about"`, `c="debug:router"`, `c="debug:container"`,
+  `c="debug:autowiring <nombre>"`, `c="doctrine:mapping:info"`.
+- `make console c="lint:container"`, `c="lint:yaml config/"`.
+- Leer el código instalado bajo `vendor/` (por ejemplo, los convertidores de
+  excepciones de DBAL: qué SQLSTATE traduce cada driver y cuál no).
+- `var/log/dev.log` y `make logs` antes de tocar código cuando algo falla.

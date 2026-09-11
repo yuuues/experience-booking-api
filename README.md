@@ -464,6 +464,32 @@ comprobación que solo mirase las plazas almacenadas —o el `CHECK` de la tabla
 §5.2— habría dado el visto bueno igualmente. Lo único que detecta la sobreventa es la aserción
 `recuento de 201 === aforo`, y por eso la sonda la hace.
 
+### 5.6 Y si la base de datos fuera MySQL
+
+Se eligió PostgreSQL porque el problema es puramente transaccional (`FOR UPDATE`, `CHECK`,
+índices únicos) y porque `SET LOCAL lock_timeout` permite acotar la espera del bloqueo con
+granularidad de milisegundos y solo para esa transacción. Nada del diseño depende de eso: el
+dominio y la aplicación no saben qué motor hay debajo, y todo lo específico del motor está en
+`Infrastructure` y en `migrations/`.
+
+Sobre MySQL 8 / InnoDB el mecanismo central es el mismo: `SELECT … FOR UPDATE` bloquea la fila
+de la sesión y serializa a los rivales igual que aquí. Los cambios serían de esquema y de
+detalle. Las restricciones `CHECK` se aplican desde **MySQL 8.0.16** (antes se parseaban y se
+ignoraban en silencio), así que en una versión anterior la aserción de §5.2 simplemente no
+existiría. No hay tipo `uuid` nativo: los ids pasarían a `BINARY(16)` —compacto, pero ilegible
+en consola— o `CHAR(36)`; el cambio se absorbe en los tipos custom de DBAL
+(`UuidType` y compañía), sin tocar mapping ni dominio. `TIMESTAMP(0) WITH TIME ZONE` no existe:
+se guardaría `DATETIME` en UTC. Y el `lock_timeout` de 2 s se convierte en
+`innodb_lock_wait_timeout`, que es de sesión y se expresa en **segundos** (mínimo 1), con lo que
+se pierde la granularidad fina; a cambio, MySQL devuelve el error `1205`, que DBAL sí traduce a
+`LockWaitTimeoutException` —el listener ya contempla esa forma, precisamente porque el driver de
+PostgreSQL no convierte su `55P03`—.
+
+El índice único `(experience_id, day)` funcionaría tal cual, porque `day` es una columna `DATE`
+real que escribe la aplicación al programar la sesión, no una expresión derivada de `starts_at`.
+Si se hubiera derivado, en MySQL habría hecho falta una columna generada o un índice funcional
+(8.0.13+) para poder indexarla.
+
 ---
 
 ## 6. Correo
@@ -492,6 +518,16 @@ Nota relacionada: **todo evento de dominio tiene handler**. Los que aún no tien
 negocio (`ExperienceRegistered`, `ExperienceUpdated`, `SessionScheduled`) los recoge
 `Shared/Infrastructure/Messenger/LogDomainEvent`, que los registra. Así ningún mensaje acaba
 acumulándose en el transporte `failed` por falta de handler.
+
+**Sobre el transporte.** Los eventos de dominio ya viajan por Symfony Messenger; el transporte
+`doctrine://` se usa aquí porque es lo que hace atómico el outbox (misma conexión, misma
+transacción) y porque no añade un contenedor más a la prueba. Pasar a RabbitMQ (AMQP) o a SQS es
+cambiar `MESSENGER_TRANSPORT_DSN` e instalar el paquete correspondiente
+(`symfony/amqp-messenger`, `symfony/amazon-sqs-messenger`): ni el dominio ni la capa de
+aplicación cambian, porque publican contra el puerto `DomainEventPublisher` y no conocen el
+transporte. Lo que sí habría que decidir entonces es cómo se mantiene la atomicidad, que es
+justamente lo que el patrón outbox resuelve: seguir escribiendo en la tabla local dentro de la
+transacción y que un relay la vuelque al broker.
 
 ---
 
@@ -597,6 +633,12 @@ cambio es un campo en `Experience` y pasarlo a `Session::schedule()`.
 **7. Límite de plazas por reserva.** Hoy no hay tope, porque el enunciado no lo pide. Si negocio
 quiere uno, es un value object más y una regla en `Session::book()`.
 
+**8. Integración continua.** Un pipeline que ejecutase en cada push exactamente los mismos
+objetivos que se ejecutan en local —`make test`, `make stan`, `make cs` y `make test-concurrency`
+contra los contenedores— y bloquease el merge si alguno falla. No está montado aquí a propósito:
+una prueba técnica no necesita pipeline, y los objetivos ya son el contrato; el fichero de CI
+sería envoltorio.
+
 **Una deuda concreta que no quiero que parezca un olvido.** La referencia de reserva se genera y
 se comprueba contra `existsByReference` antes de abrir la transacción; entre esa comprobación y
 el `INSERT` hay una ventana de carrera. Si dos peticiones generasen la misma referencia (con 8
@@ -666,11 +708,41 @@ no modela a propósito. `doctrine:schema:update --dump-sql` enumera exactamente 
 
 Es decir: la base de datos tiene **más** garantías que el mapping, no menos. Sincronizarlas
 significaría degradar el esquema para satisfacer a una herramienta, y `doctrine:schema:update`
-no se ejecuta nunca en este proyecto (§10: *el esquema nunca se toca a mano*).
+no se ejecuta nunca en este proyecto (§11: *el esquema nunca se toca a mano*).
 
 ---
 
-## 10. Estructura del repositorio
+## 10. Cómo se ha construido
+
+El orden de trabajo fue especificación → plan por fases → TDD → revisión independiente. En
+[`docs/design/`](docs/design/) están la especificación y los supuestos que se tomaron sobre el
+enunciado antes de escribir código; en
+[`docs/plans/2026-09-10-experience-booking-api/`](docs/plans/2026-09-10-experience-booking-api/),
+el plan de implementación fase a fase que el trabajo siguió realmente (los mensajes de commit
+van en ese mismo orden). Los tests se escribieron antes que la implementación en todas las
+fases de dominio y aplicación.
+
+Se ha construido con asistencia de IA (Claude Code) dentro de ese flujo dirigido por
+especificación, con [`AGENTS.md`](AGENTS.md) como fichero de convenciones del que parte el
+asistente, y con cada tarea revisada de forma independiente contra su enunciado antes de darla
+por buena.
+
+Lo que esa revisión encontró es la parte interesante, así que conviene decirlo en concreto. La
+rama que traduce el `lock_timeout` a `503` era **código muerto sobre PostgreSQL**: capturaba
+solo `LockWaitTimeoutException`, y el driver de PostgreSQL de DBAL no convierte el SQLSTATE
+`55P03` —no tiene un `case` para él—, así que devolvía un plain `DriverException` y la respuesta
+habría sido un `500` (commit `6e822cd`, que añade la comprobación del SQLSTATE). Una primera
+implementación de los tipos custom de DBAL necesitaba una decena de supresiones de PHPStan en
+línea; se rediseñó con interfaces explícitas para no necesitar ninguna (mismo commit). Ningún
+test fijaba que las escrituras ocurren **dentro** de la transacción con el bloqueo cogido —los
+dobles in-memory pasaban igual con la escritura fuera—, hasta que se añadió uno que lo
+comprueba (commit `6921150`). Y la API rechazaba `2026-09-14T10:00:00Z`, un instante ISO 8601
+perfectamente válido, porque el DTO exigía el formato ATOM exacto; no se vio hasta que una
+colección de Bruno intentó usar la salida de `toISOString()` (commit `7784cb2`).
+
+---
+
+## 11. Estructura del repositorio
 
 ```
 src/                  código de la aplicación (ver §3)

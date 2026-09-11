@@ -30,6 +30,15 @@ final readonly class FindExperienceController
         content: new Model(type: ExperienceResponse::class),
     )]
     #[OA\Response(
+        response: 400,
+        description: 'El id tiene un formato inválido: encaja con el patrón de la ruta pero no es un UUID '
+            . 'bien formado (por ejemplo, los guiones no están en la posición correcta).',
+        content: new OA\JsonContent(ref: new Model(type: ProblemDetails::class), example: [
+            'type' => '/problems/invalid-value', 'title' => 'Invalid value', 'status' => 400,
+            'detail' => '<aaaaaaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaa> is not a valid UUID.',
+        ]),
+    )]
+    #[OA\Response(
         response: 404,
         description: 'No existe ninguna experiencia con ese id.',
         content: new OA\JsonContent(ref: new Model(type: ProblemDetails::class), example: [

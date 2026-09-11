@@ -7,25 +7,17 @@ namespace App\Tests\Functional;
 use PHPUnit\Framework\Attributes\Test;
 use Symfony\Bundle\FrameworkBundle\KernelBrowser;
 use Symfony\Bundle\FrameworkBundle\Test\WebTestCase;
+use Symfony\Component\Routing\RouterInterface;
 
 /**
- * Keeps the OpenAPI documentation honest: a new `api_*` route that is not documented, or an
- * existing one whose method changes without updating its attributes, fails this suite instead
- * of rotting silently.
+ * Keeps the OpenAPI documentation honest against the *actual* router, not a hardcoded guess: a
+ * new `api_*` route added with no documentation, or an existing one whose method changes, fails
+ * this suite instead of rotting silently. Nelmio's own routes (`app.swagger`, `app.swagger_ui`)
+ * and Symfony's dev-only `_preview_error` are excluded by construction — none of them are named
+ * `api_*`.
  */
 final class OpenApiDocumentationTest extends WebTestCase
 {
-    /** @var array<string, list<string>> path => allowed HTTP methods, as declared by the `#[Route]` attributes */
-    private const array EXPECTED_ROUTES = [
-        '/api/experiences' => ['post'],
-        '/api/experiences/{id}' => ['get', 'put'],
-        '/api/experiences/{experienceId}/sessions' => ['post'],
-        '/api/sessions/{id}' => ['get'],
-        '/api/sessions/{sessionId}/bookings' => ['post'],
-        '/api/bookings/{reference}' => ['get'],
-        '/api/bookings/{reference}/cancellation' => ['post'],
-    ];
-
     private KernelBrowser $client;
 
     protected function setUp(): void
@@ -43,32 +35,38 @@ final class OpenApiDocumentationTest extends WebTestCase
     }
 
     #[Test]
-    public function the_spec_documents_every_api_route_with_its_methods(): void
+    public function the_spec_documents_exactly_the_routers_api_routes_and_their_methods(): void
     {
-        $paths = $this->paths();
+        $expectedRoutes = $this->apiRoutesFromRouter();
+        $documentedPaths = $this->documentedPaths();
 
-        foreach (self::EXPECTED_ROUTES as $path => $methods) {
-            self::assertArrayHasKey($path, $paths, "Missing documented path: {$path}");
-            $operations = $paths[$path];
+        $expectedPaths = array_keys($expectedRoutes);
+        sort($expectedPaths);
+        $actualPaths = array_keys($documentedPaths);
+        sort($actualPaths);
+        self::assertSame($expectedPaths, $actualPaths, 'The documented paths must match exactly the api_* routes the router serves (a route was added or removed without updating the docs).');
+
+        foreach ($expectedRoutes as $path => $methods) {
+            $operations = $documentedPaths[$path];
             self::assertIsArray($operations);
-            foreach ($methods as $method) {
-                self::assertArrayHasKey($method, $operations, "Missing method \"{$method}\" for path: {$path}");
-            }
+            $documentedMethods = array_keys($operations);
+            sort($methods);
+            sort($documentedMethods);
+            self::assertSame($methods, $documentedMethods, "Methods documented for {$path} do not match the route (declared: " . implode(',', $methods) . ').');
         }
-
-        $documentedMethodCount = array_sum(array_map(static fn(array $methods): int => \count($methods), array_values(self::EXPECTED_ROUTES)));
-        self::assertSame(8, $documentedMethodCount, 'The API is expected to expose 8 operations.');
     }
 
     #[Test]
     public function every_operation_documents_its_summary_and_responses(): void
     {
-        $paths = $this->paths();
+        $expectedRoutes = $this->apiRoutesFromRouter();
+        $documentedPaths = $this->documentedPaths();
 
-        foreach (self::EXPECTED_ROUTES as $path => $methods) {
-            $operations = $paths[$path];
+        foreach ($expectedRoutes as $path => $methods) {
+            $operations = $documentedPaths[$path];
             self::assertIsArray($operations);
             foreach ($methods as $method) {
+                self::assertArrayHasKey($method, $operations, "Missing method \"{$method}\" for path: {$path}");
                 $operation = $operations[$method];
                 self::assertIsArray($operation);
                 self::assertArrayHasKey('summary', $operation, "Missing summary for {$method} {$path}");
@@ -83,14 +81,45 @@ final class OpenApiDocumentationTest extends WebTestCase
     #[Test]
     public function the_documentation_routes_are_not_listed_as_api_endpoints(): void
     {
-        $paths = $this->paths();
+        $paths = $this->documentedPaths();
 
         self::assertArrayNotHasKey('/api/doc', $paths);
         self::assertArrayNotHasKey('/api/doc.json', $paths);
     }
 
+    /**
+     * The api_* routes actually registered in the router, keyed by path with their declared
+     * (lowercased) HTTP methods — the source of truth the spec is checked against.
+     *
+     * @return array<string, list<string>>
+     */
+    private function apiRoutesFromRouter(): array
+    {
+        $router = self::getContainer()->get('router');
+        self::assertInstanceOf(RouterInterface::class, $router);
+
+        $routes = [];
+        foreach ($router->getRouteCollection() as $name => $route) {
+            if (!str_starts_with($name, 'api_')) {
+                // Excludes Nelmio's app.swagger / app.swagger_ui and Symfony's _preview_error:
+                // none of the application's own endpoints are named anything but api_*.
+                continue;
+            }
+
+            $methods = array_map(strtolower(...), $route->getMethods());
+            self::assertNotEmpty($methods, "Route \"{$name}\" must declare explicit HTTP methods to be documentable.");
+
+            $path = $route->getPath();
+            $routes[$path] = array_values(array_unique([...($routes[$path] ?? []), ...$methods]));
+        }
+
+        self::assertNotEmpty($routes, 'Expected at least one api_* route to check the documentation against.');
+
+        return $routes;
+    }
+
     /** @return array<mixed> */
-    private function paths(): array
+    private function documentedPaths(): array
     {
         $this->client->request('GET', '/api/doc.json');
 

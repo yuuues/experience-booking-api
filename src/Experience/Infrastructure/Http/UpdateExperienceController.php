@@ -34,8 +34,13 @@ final readonly class UpdateExperienceController
     )]
     #[OA\Response(
         response: 400,
-        description: 'El cuerpo de la petición no valida (título o descripción vacíos o demasiado largos).',
-        content: new OA\JsonContent(ref: new Model(type: ValidationProblemDetails::class), example: [
+        description: 'Dos causas posibles, distinguibles por si el cuerpo trae `errors[]`: (1) el cuerpo de la '
+            . 'petición no valida (título o descripción vacíos o demasiado largos) — `errors[]` presente; '
+            . '(2) `id` en la URL encaja con el patrón de la ruta pero no es un UUID bien formado — sin `errors[]`.',
+        content: new OA\JsonContent(oneOf: [
+            new OA\Schema(ref: new Model(type: ValidationProblemDetails::class)),
+            new OA\Schema(ref: new Model(type: ProblemDetails::class)),
+        ], example: [
             'type' => '/problems/validation-failed', 'title' => 'Validation failed', 'status' => 400,
             'detail' => 'The request payload is invalid.',
             'errors' => [['field' => 'title', 'message' => 'This value should not be blank.']],

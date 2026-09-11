@@ -37,12 +37,22 @@ final readonly class BookSeatsController
     #[OA\Response(
         response: 201,
         description: 'Reserva confirmada. La cabecera `Location` apunta a `GET /api/bookings/{reference}`.',
-        content: new Model(type: BookingResponse::class),
+        content: new OA\JsonContent(allOf: [
+            new OA\Schema(ref: new Model(type: BookingResponse::class)),
+            new OA\Schema(properties: [
+                new OA\Property(property: 'status', type: 'string', enum: ['confirmed', 'cancelled'], description: 'Estado de la reserva.'),
+            ]),
+        ]),
     )]
     #[OA\Response(
         response: 400,
-        description: 'El cuerpo de la petición no valida (`userId` no es un UUID, `seats` no es positivo).',
-        content: new OA\JsonContent(ref: new Model(type: ValidationProblemDetails::class), example: [
+        description: 'Dos causas posibles, distinguibles por si el cuerpo trae `errors[]`: (1) el cuerpo de la '
+            . 'petición no valida (`userId` no es un UUID, `seats` no es positivo) — `errors[]` presente; '
+            . '(2) `sessionId` en la URL encaja con el patrón de la ruta pero no es un UUID bien formado — sin `errors[]`.',
+        content: new OA\JsonContent(oneOf: [
+            new OA\Schema(ref: new Model(type: ValidationProblemDetails::class)),
+            new OA\Schema(ref: new Model(type: ProblemDetails::class)),
+        ], example: [
             'type' => '/problems/validation-failed', 'title' => 'Validation failed', 'status' => 400,
             'detail' => 'The request payload is invalid.',
             'errors' => [

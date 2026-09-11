@@ -56,10 +56,11 @@ Prefijo `/api`. JSON de entrada y salida. Los ids son UUID v7 generados en el se
 | `GET` | `/api/bookings/{reference}` | — | `200` |
 | `POST` | `/api/bookings/{reference}/cancellation` | — | `200`, reserva con `status: cancelled` |
 
-Ocho rutas `api_*` (más `/api/doc` y `/api/doc.json`, la documentación interactiva; en total diez
-si se cuentan con `make console c="debug:router"`). `startsAt` acepta cualquier instante ISO 8601
-con zona explícita (`Z` o un offset numérico como `+02:00`), con o sin segundos fraccionarios; una
-hora local sin zona se rechaza por ambigua.
+Ocho rutas `api_*`. `make console c="debug:router"` lista once en total: esas ocho, las dos de
+Nelmio (`app.swagger`, `app.swagger_ui`, la documentación interactiva) y la `_preview_error` que
+Symfony registra solo en `dev` para previsualizar páginas de error. `startsAt` acepta cualquier
+instante ISO 8601 con zona explícita (`Z` o un offset numérico como `+02:00`), con o sin segundos
+fraccionarios; una hora local sin zona se rechaza por ambigua.
 
 Documentación interactiva (Swagger UI) en [`/api/doc`](http://localhost:8080/api/doc), spec en
 crudo en [`/api/doc.json`](http://localhost:8080/api/doc.json): cada endpoint con su cuerpo de
@@ -611,19 +612,19 @@ al cliente.
 ## 9. Calidad
 
 ```bash
-make test              # 131 tests
+make test              # 145 tests
 make stan              # PHPStan nivel max
 make cs                # PHP-CS-Fixer, @Symfony + @PER-CS2.0
 make test-concurrency  # sonda de concurrencia contra la API real
 ```
 
-**Tests: 131, 1446 aserciones.**
+**Tests: 145, 1599 aserciones.**
 
 | Suite | Tests | Qué cubre |
 |---|---|---|
-| `tests/Unit` | 95 | Reglas de negocio sobre agregados y value objects; handlers con repositorios in-memory, `FixedClock` e `InMemoryMailer`. Sin base de datos, milisegundos |
+| `tests/Unit` | 97 | Reglas de negocio sobre agregados y value objects; handlers con repositorios in-memory, `FixedClock` e `InMemoryMailer`. Sin base de datos, milisegundos |
 | `tests/Integration` | 16 | Repositorios Doctrine contra PostgreSQL real: round-trip de value objects, `findForUpdate`, el índice único traducido a excepción de dominio, la idempotencia del registro DBAL y la atomicidad del outbox |
-| `tests/Functional` | 20 | `WebTestCase` sobre los 8 endpoints: éxitos, cada código de error, formato `problem+json`, cabecera `Location` y los correos generados |
+| `tests/Functional` | 32 | `WebTestCase` sobre los 8 endpoints de negocio (éxitos, cada código de error, formato `problem+json`, cabecera `Location`, correos generados) más la documentación OpenAPI, comprobada contra el router real para que un endpoint nuevo sin documentar rompa la suite |
 | `bin/concurrency-test` | — | Sonda fuera de PHPUnit: procesos concurrentes reales contra la API dockerizada (`make test-concurrency`) |
 
 La sonda de concurrencia está deliberadamente fuera de PHPUnit: lo que se quiere demostrar es

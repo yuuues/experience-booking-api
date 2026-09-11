@@ -28,7 +28,22 @@ final readonly class CancelBookingController
     #[OA\Response(
         response: 200,
         description: 'Reserva cancelada (`status: cancelled`, `cancelledAt` con la fecha de cancelación).',
-        content: new Model(type: BookingResponse::class),
+        content: new OA\JsonContent(allOf: [
+            new OA\Schema(ref: new Model(type: BookingResponse::class)),
+            new OA\Schema(properties: [
+                new OA\Property(property: 'status', type: 'string', enum: ['confirmed', 'cancelled'], description: 'Estado de la reserva.'),
+            ]),
+        ]),
+    )]
+    #[OA\Response(
+        response: 400,
+        description: 'La referencia tiene un formato inválido: encaja con el patrón de la ruta pero no es una '
+            . 'referencia bien formada, por ejemplo porque contiene alguna de las letras ambiguas excluidas '
+            . 'del alfabeto (I, L, O, U).',
+        content: new OA\JsonContent(ref: new Model(type: ProblemDetails::class), example: [
+            'type' => '/problems/invalid-value', 'title' => 'Invalid value', 'status' => 400,
+            'detail' => '<BK-IIIIIIII> is not a valid booking reference.',
+        ]),
     )]
     #[OA\Response(
         response: 404,

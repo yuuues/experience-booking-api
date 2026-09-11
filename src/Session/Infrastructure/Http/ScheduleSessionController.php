@@ -41,8 +41,14 @@ final readonly class ScheduleSessionController
     )]
     #[OA\Response(
         response: 400,
-        description: 'El cuerpo de la petición no valida (fecha sin zona horaria explícita, aforo no positivo, precio negativo o divisa no ISO 4217).',
-        content: new OA\JsonContent(ref: new Model(type: ValidationProblemDetails::class), example: [
+        description: 'Dos causas posibles, distinguibles por si el cuerpo trae `errors[]`: (1) el cuerpo de la '
+            . 'petición no valida (fecha sin zona horaria explícita, aforo no positivo, precio negativo o divisa '
+            . 'no ISO 4217) — `errors[]` presente; (2) `experienceId` en la URL encaja con el patrón de la ruta '
+            . 'pero no es un UUID bien formado — sin `errors[]`.',
+        content: new OA\JsonContent(oneOf: [
+            new OA\Schema(ref: new Model(type: ValidationProblemDetails::class)),
+            new OA\Schema(ref: new Model(type: ProblemDetails::class)),
+        ], example: [
             'type' => '/problems/validation-failed', 'title' => 'Validation failed', 'status' => 400,
             'detail' => 'The request payload is invalid.',
             'errors' => [['field' => 'capacity', 'message' => 'This value should be positive.']],
